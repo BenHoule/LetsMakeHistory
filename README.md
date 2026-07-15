@@ -57,7 +57,30 @@ Open it in any modern web browser (Chrome, Firefox, Safari, Edge).
 
 ## Developer Setup
 
-Follow these steps exactly, in order. Each step has an explanation of what it does.
+### Quick Setup (Automated)
+
+We provide an automated setup script that installs all dependencies for your OS:
+
+```bash
+bash setup.sh
+```
+
+This script will:
+- Detect your operating system
+- Install Node.js 20 LTS (if needed)
+- Install pnpm globally (if needed)
+- Install build tools (Visual Studio Build Tools on Windows, Xcode on macOS, build-essential on Linux)
+
+> **macOS users:** You need Homebrew first. Install from https://brew.sh  
+> **Windows users:** You need Node.js pre-installed. Download from https://nodejs.org (LTS version)
+
+After the script completes, you're ready to develop. Skip to [Step 4 (Clone the Repository)](#step-4--clone-the-repository).
+
+---
+
+### Manual Setup (If Preferred)
+
+If you prefer to install dependencies manually, follow these steps exactly, in order. Each step has an explanation of what it does.
 
 ### Prerequisites
 
@@ -106,7 +129,7 @@ cd lmhistory/root
 
 If you don't have Git, click the green **"Code"** button on the GitHub page, choose **"Download ZIP"**, extract it, then open a terminal and navigate into the `root/` folder inside.
 
-#### Step 4 — Install Dependencies
+#### Step 4 — Install Project Dependencies
 
 This downloads all the libraries the project needs. Run this once:
 ```bash
