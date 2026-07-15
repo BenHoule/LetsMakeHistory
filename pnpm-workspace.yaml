@@ -1,0 +1,14 @@
+packages:
+  - 'packages/types'
+  - 'packages/rules'
+  - 'packages/server'
+  - 'packages/client'
+  # packages/electron is intentionally excluded — it is installed separately
+  # by build-dist.sh to avoid pnpm's build-script approval gate for Electron.
+
+allowBuilds:
+  better-sqlite3: true
+  esbuild: true
+
+allowedDeprecatedVersions:
+  prebuild-install: '*'

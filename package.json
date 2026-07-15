@@ -1,0 +1,37 @@
+{
+  "name": "root",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "dev:server": "pnpm -F @lmh/server run dev",
+    "dev:client": "pnpm -F @lmh/client run dev",
+    "build": "bash build-dist.sh",
+    "test": "vitest"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devEngines": {
+    "packageManager": {
+      "name": "pnpm",
+      "version": "^11.12.0",
+      "onFail": "download"
+    }
+  },
+  "type": "module",
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/express": "^5.0.6",
+    "typescript": "^7.0.2",
+    "vite-tsconfig-paths": "^6.1.1",
+    "vitest": "^4.1.10"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.11.1",
+    "express": "^5.2.1",
+    "fs": "0.0.1-security",
+    "path": "^0.12.7",
+    "socket.io": "^4.8.3"
+  }
+}

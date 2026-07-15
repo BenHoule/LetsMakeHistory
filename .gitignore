@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+packages/client/build/
+packages/client/.svelte-kit/
+packages/server/dist/
+dist/
+
+# Database (user data, not source code)
+*.db
+*.db-shm
+*.db-wal
+
+# Environment variables (may contain secrets)
+.env
+.env.local
+.env.*.local
+# Keep .env.production since it only has empty/public values
+!packages/client/.env.production
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+.vscode/settings.json
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Electron build cache
+packages/electron/node_modules/

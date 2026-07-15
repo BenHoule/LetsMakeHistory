@@ -1,0 +1,96 @@
+{
+  "name": "lmhistory-app",
+  "version": "1.0.0",
+  "description": "Let's Make History — GM Companion App",
+  "author": "Let's Make History Contributors",
+  "main": "main.cjs",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder"
+  },
+  "build": {
+    "appId": "com.lmhistory.companion",
+    "productName": "Let's Make History",
+    "copyright": "GPL-3.0",
+    "directories": {
+      "output": "/home/bhoule/LMHistory/root/dist"
+    },
+    "extraResources": [
+      {
+        "from": "/home/bhoule/LMHistory/root/packages/server",
+        "to": "server",
+        "filter": [
+          "**/*",
+          "!src/**",
+          "!node_modules/.cache/**",
+          "!**/*.map"
+        ]
+      },
+      {
+        "from": "/home/bhoule/LMHistory/root/packages/client/build",
+        "to": "client-build"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "icons/icon.ico",
+      "sign": null,
+      "certificateFile": null,
+      "certificatePassword": null,
+      "signingHashAlgorithms": [],
+      "signAndEditExecutable": false
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "icon": "icons/icon.icns",
+      "category": "public.app-category.games"
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "icons/icon.png",
+      "category": "Game"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "icons/icon.ico",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Let's Make History"
+    },
+    "npmRebuild": true,
+    "nodeGypRebuild": false,
+    "buildDependenciesFromSource": false,
+    "asar": false
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0"
+  },
+  "allowScripts": {
+    "file:../../../node_modules/.pnpm/electron@33.4.11/node_modules/electron": true
+  }
+}

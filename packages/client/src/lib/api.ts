@@ -1,0 +1,32 @@
+import { PUBLIC_API_URL } from '$env/static/public';
+
+/**
+ * Makes an HTTP request to the API.
+ * @param method The HTTP method (e.g., 'GET', 'POST').
+ * @param path The API endpoint path.
+ * @param body The request body, if applicable.
+ * @returns The parsed JSON response.
+ */
+async function request<T>(method: string, path: string, body?: unknown, extraHeaders?: Record<string, string>): Promise<T> {
+  const res = await fetch(`${PUBLIC_API_URL}${path}`, {
+    method,
+    headers: {
+      ...(body ? { 'Content-Type': 'application/json' } : {}),
+      ...extraHeaders,
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) {
+    throw new Error(`${method} ${path} \u2192 ${res.status}`);
+  }
+  return res.json() as Promise<T>;
+}
+
+export const api = {
+  get:     <T>(path: string)                                    => request<T>('GET',  path),
+  post:    <T>(path: string, body: unknown)                     => request<T>('POST', path, body),
+  gmGet:   <T>(path: string, gmToken: string)                   => request<T>('GET',  path, undefined, { 'x-gm-token': gmToken }),
+  gmPost:   <T>(path: string, gmToken: string, body?: unknown)   => request<T>('POST',   path, body,      { 'x-gm-token': gmToken }),
+  gmDelete: <T>(path: string, gmToken: string)                   => request<T>('DELETE', path, undefined, { 'x-gm-token': gmToken }),
+};
+

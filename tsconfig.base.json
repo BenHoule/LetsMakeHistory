@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "skipLibCheck": true,
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "declaration": true,
+    "paths": {
+      "@lmh/types": ["./packages/types/src/index.ts"],
+      "@lmh/rules": ["./packages/rules/index.ts"]
+    }
+  }
+}

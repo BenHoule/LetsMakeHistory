@@ -1,0 +1,3 @@
+ALTER TABLE bills ADD COLUMN yea_count   INTEGER;
+ALTER TABLE bills ADD COLUMN nay_count   INTEGER;
+ALTER TABLE bills ADD COLUMN abstain_count INTEGER;
