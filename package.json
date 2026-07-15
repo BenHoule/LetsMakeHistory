@@ -6,7 +6,8 @@
   "scripts": {
     "dev:server": "pnpm -F @lmh/server run dev",
     "dev:client": "pnpm -F @lmh/client run dev",
-    "build": "bash build-dist.sh",
+    "build": "node build-dist.mjs",
+    "build:bash": "bash build-dist.sh",
     "test": "vitest"
   },
   "keywords": [],

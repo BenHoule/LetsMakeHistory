@@ -224,20 +224,25 @@ Open a terminal, navigate to the `root/` folder of the project, and run:
 
 ```bash
 # Build for your current operating system:
-bash build-dist.sh
+node build-dist.mjs
+
+# Equivalent shortcut:
+pnpm run build
 
 # Or target a specific platform:
-bash build-dist.sh --linux          # Linux AppImage
-bash build-dist.sh --win            # Windows NSIS installer
-bash build-dist.sh --win-dir        # Windows unpacked dir (no installer, for testing)
-bash build-dist.sh --mac            # macOS DMG (must run on macOS for notarization)
+node build-dist.mjs --linux          # Linux AppImage
+node build-dist.mjs --win            # Windows NSIS installer
+node build-dist.mjs --win-dir        # Windows unpacked dir (no installer, for testing)
+node build-dist.mjs --mac            # macOS DMG (must run on macOS for notarization)
 ```
+
+> Legacy shell path (still available): `bash build-dist.sh`
 
 #### Platform-Specific Notes
 
 **Windows via WSL2 or Git Bash:**
 ```bash
-bash build-dist.sh --win
+node build-dist.mjs --win
 ```
 - If running in **WSL2**, the script automatically detects it and outputs an unpacked Windows app directory (skips the NSIS installer to avoid Wine issues).
 - To create the final `.exe` installer, copy the app from `dist/win-unpacked/` to a Windows machine with `electron-builder` installed, or download a pre-built installer from the releases page.
@@ -253,7 +258,7 @@ sudo apt-get install -y wine32:i386
 WINEPREFIX=~/.wine32 WINEARCH=win32 wineboot --init
 
 # Then build (always include WINEPREFIX=):
-WINEPREFIX=~/.wine32 WINEARCH=win32 bash build-dist.sh --win
+WINEPREFIX=~/.wine32 WINEARCH=win32 node build-dist.mjs --win
 ```
 
 The script will:
@@ -314,7 +319,8 @@ root/
 │   ├── server/         # Express + Socket.io backend, SQLite via better-sqlite3
 │   ├── client/         # SvelteKit frontend (Svelte 5 runes, Tailwind v4)
 │   └── electron/       # Electron wrapper for distribution
-├── build-dist.sh       # One-command distribution build
+├── build-dist.mjs      # Cross-platform distribution build entrypoint
+├── build-dist.sh       # Legacy shell build script
 └── README.md
 ```
 
