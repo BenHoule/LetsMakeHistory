@@ -49,8 +49,26 @@ Open it in any modern web browser (Chrome, Firefox, Safari, Edge).
 5. Right-click the tray icon and choose **"Copy Player Link (LAN)"**.  
    Send that link to your players — they open it in their browsers.
 
+6. For internet invites, use the tray settings (no environment variables required):
+   - Right-click tray icon → **Open Invite Settings File**.
+   - Edit `publicBaseUrl` in `invite-settings.json` (example: `https://mygame.example.com` or `my-public-ip:3000`).
+   - Save the file and restart the app.
+   - Right-click tray icon → **Copy Player Link (Internet)**.
+
+7. If `publicBaseUrl` is left empty, the app will try to auto-detect your public IP and generate an internet link using `publicPort`.
+   - You can verify status in the tray menu under **Internet Link Source**.
+   - Use **Show Invite Setup Instructions** from the tray for on-screen guidance.
+
+> **Internet play (outside your LAN):**
+> - Recommended: use the secure self-hosted HTTPS setup in `deploy/self-host/README.md`.
+> - Fastest path on Windows: run `powershell -ExecutionPolicy Bypass -File .\\deploy\\self-host\\setup-caddy-windows.ps1`.
+> - This uses a reverse proxy (Caddy) on ports **80/443** and keeps the app private on `localhost:3000`.
+> - The helper supports a fully free public-IP mode too, but that mode is HTTP (not encrypted).
+> - Share an HTTPS link (for example `https://game.example.com/lobby`) with players.
+> - The packaged app uses same-origin API/WebSocket URLs, so remote players connect to the same secure host they opened.
+
 > **Troubleshooting:** If players can't connect, make sure your computer's firewall  
-> allows connections on port **3000** from your local network.  
+> allows connections on ports **80/443** for your reverse proxy, and that your router forwards those ports correctly.  
 > On Windows: Start → "Windows Defender Firewall" → "Allow an app through firewall" → add "Let's Make History".
 
 ---
@@ -319,6 +337,7 @@ root/
 │   ├── server/         # Express + Socket.io backend, SQLite via better-sqlite3
 │   ├── client/         # SvelteKit frontend (Svelte 5 runes, Tailwind v4)
 │   └── electron/       # Electron wrapper for distribution
+├── deploy/self-host/   # Secure HTTPS reverse-proxy setup (Caddy)
 ├── build-dist.mjs      # Cross-platform distribution build entrypoint
 ├── build-dist.sh       # Legacy shell build script
 └── README.md

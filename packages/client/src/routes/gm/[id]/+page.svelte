@@ -4,6 +4,7 @@
   import { page } from '$app/state';
   import { socket } from '$lib/socket.js';
   import { api } from '$lib/api.js';
+  import { runtimeConfig } from '$lib/runtime.js';
   import { sessionStore, phase, setSession, setPlayers, players } from '../../../stores/session.js';
   import { addPlayerAction, pendingActions, pendingStatRolls, visibilitySettings, setVisibility } from '../../../stores/gm.js';
   import { pendingActionVotes, addActionVote, removeActionVote } from '../../../stores/votes.js';
@@ -79,6 +80,11 @@
   let spResult    = $state<any>(null);
   let newNpcYear  = $state(1904);
   let newNpcNames = $state<Record<string,string>>({ Progressive:'', Unionist:'', Whig:'', Conservative:'' });
+  const sharePlayerBaseUrl = $derived($runtimeConfig.sharePlayerBaseUrl ?? page.url.origin);
+
+  function getSharePlayerLink() {
+    return `${sharePlayerBaseUrl}/lobby?session=${sessionId}`;
+  }
 
   // Eligible presidential candidates: recognition >= 50 AND in top-2 nationally
   const presEligible = $derived(
@@ -575,7 +581,7 @@
     <div style="font-size:11px; color:#7a7362; text-transform:uppercase; letter-spacing:1px; display:flex; align-items:center; gap:8px;">
       GM Companion &mdash; <span style="font-family:monospace; text-transform:none; letter-spacing:0;">{sessionId}</span>
       <button
-        onclick={() => navigator.clipboard.writeText(`${page.url.origin}/lobby?session=${sessionId}`)}
+        onclick={() => navigator.clipboard.writeText(getSharePlayerLink())}
         title="Copy player join link"
         style="font-size:10px; background:#3b6d11; color:#fff; border:none; border-radius:3px; padding:2px 7px; cursor:pointer; text-transform:none; letter-spacing:0; line-height:1.6;">Copy Player Link</button>
     </div>

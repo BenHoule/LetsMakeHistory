@@ -29,6 +29,15 @@ const PORT = Number(process.env.PORT ?? 3001);
 // In a packaged Electron app this is set to the extracted static build folder.
 const STATIC_DIR = process.env.STATIC_DIR ?? path.join(__dirname, '..', '..', 'client', 'build');
 
+function getRuntimeConfig() {
+  const sharePlayerBaseUrl = (process.env.INTERNET_BASE_URL ?? process.env.PUBLIC_BASE_URL ?? '').trim();
+  const internetInviteSource = (process.env.INTERNET_INVITE_SOURCE ?? 'unknown').trim() || 'unknown';
+  return {
+    sharePlayerBaseUrl: sharePlayerBaseUrl || null,
+    internetInviteSource,
+  };
+}
+
 const db = new Database(DB_PATH);
 db.pragma('journal_mode = WAL'); // allows concurrent reads alongside writes
 db.pragma('foreign_keys = ON');  // enforce all REFERENCES constraints
@@ -55,6 +64,10 @@ const gameService = makeGameService(db, io);
 
 // Stub health check -- replace with real router in M2
 app.get('/health', (_req, res) => res.json({ok: true}));
+
+app.get('/api/v1/runtime-config', (_req, res) => {
+  res.json(getRuntimeConfig());
+});
 
 app.get('/api/v1/sessions', (_req, res) => {
   res.json(queries.listSessions());

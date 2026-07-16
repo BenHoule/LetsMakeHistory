@@ -71,7 +71,6 @@
         { name, region, party, class: clss },
       );
       sessionStorage.setItem(`lmh:player:${sessionId}`, res.playerId);
-      localStorage.setItem(`lmh:player:${sessionId}`, res.playerId); // fallback for same-tab refresh
       setPlayerId(res.playerId);
       onJoined(res.playerId);
     } catch (e: any) {

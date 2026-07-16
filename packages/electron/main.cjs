@@ -14,7 +14,9 @@
 const { app, Tray, Menu, shell, dialog, clipboard, nativeImage, utilityProcess } = require('electron');
 const path   = require('path');
 const http   = require('http');
+const https  = require('https');
 const os     = require('os');
+const fs     = require('fs');
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 const PORT  = Number(process.env.PORT ?? 3000);
@@ -30,6 +32,7 @@ const STATIC_DIR = isDev
   : path.join(process.resourcesPath, 'client-build');
 
 const DB_PATH = path.join(app.getPath('userData'), 'lmhistory.db');
+const INVITE_CONFIG_PATH = path.join(app.getPath('userData'), 'invite-settings.json');
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function getLocalIP () {
@@ -56,6 +59,199 @@ function waitForServer (retries = 60) {
   });
 }
 
+function normalizeBaseUrl (raw, fallbackPort = PORT) {
+  const text = String(raw ?? '').trim();
+  if (!text) return null;
+
+  const inferredScheme = fallbackPort === 443 ? 'https' : 'http';
+  const candidate = /^https?:\/\//i.test(text) ? text : `${inferredScheme}://${text}`;
+  try {
+    const url = new URL(candidate);
+    const protocol = url.protocol === 'https:' ? 'https:' : 'http:';
+    const host = url.hostname;
+    if (!host) return null;
+
+    const resolvedPort = url.port || (protocol === 'http:' && fallbackPort ? String(fallbackPort) : '');
+    return `${protocol}//${host}${resolvedPort ? `:${resolvedPort}` : ''}`;
+  } catch {
+    return null;
+  }
+}
+
+function writeDefaultInviteConfig () {
+  const template = {
+    _instructions: [
+      'Set publicBaseUrl to your public host/domain so the tray can copy an internet invite link.',
+      'Examples: https://your-domain.example OR your-public-ip:3000',
+      'If publicBaseUrl is empty and autoDetectPublicIp is true, the app will try to detect your public IP automatically.',
+      'After editing this file, restart the app to reload settings.',
+    ],
+    publicBaseUrl: '',
+    autoDetectPublicIp: true,
+    publicIpServiceUrl: 'https://api.ipify.org?format=json',
+    publicPort: PORT,
+  };
+
+  fs.writeFileSync(INVITE_CONFIG_PATH, JSON.stringify(template, null, 2));
+}
+
+function getInviteConfigCandidatePaths () {
+  const appData = process.env.APPDATA;
+  const programData = process.env.ProgramData;
+
+  return [
+    ...(programData
+      ? [path.join(programData, 'LetsMakeHistory', 'invite-settings.json')]
+      : []),
+    INVITE_CONFIG_PATH,
+    ...(appData
+      ? [
+          path.join(appData, 'Let\'s Make History', 'invite-settings.json'),
+          path.join(appData, 'lmhistory-app', 'invite-settings.json'),
+        ]
+      : []),
+  ];
+}
+
+function loadInviteConfig () {
+  const candidatePaths = getInviteConfigCandidatePaths();
+  const existingPath = candidatePaths.find(configPath => fs.existsSync(configPath));
+
+  if (!existingPath) {
+    writeDefaultInviteConfig();
+  }
+
+  try {
+    const resolvedPath = existingPath ?? INVITE_CONFIG_PATH;
+    const parsed = JSON.parse(fs.readFileSync(resolvedPath, 'utf8'));
+    const portCandidate = Number(parsed?.publicPort);
+    const publicPort = Number.isInteger(portCandidate) && portCandidate > 0 && portCandidate <= 65535
+      ? portCandidate
+      : PORT;
+
+    return {
+      publicBaseUrl: typeof parsed?.publicBaseUrl === 'string' ? parsed.publicBaseUrl.trim() : '',
+      autoDetectPublicIp: parsed?.autoDetectPublicIp !== false,
+      publicIpServiceUrl:
+        typeof parsed?.publicIpServiceUrl === 'string' && parsed.publicIpServiceUrl.trim()
+          ? parsed.publicIpServiceUrl.trim()
+          : 'https://api.ipify.org?format=json',
+      publicPort,
+    };
+  } catch {
+    writeDefaultInviteConfig();
+    return {
+      publicBaseUrl: '',
+      autoDetectPublicIp: true,
+      publicIpServiceUrl: 'https://api.ipify.org?format=json',
+      publicPort: PORT,
+    };
+  }
+}
+
+function detectPublicIp (serviceUrl) {
+  return new Promise(resolve => {
+    let settled = false;
+    const finish = value => {
+      if (!settled) {
+        settled = true;
+        resolve(value);
+      }
+    };
+
+    try {
+      const req = https.get(serviceUrl, {
+        timeout: 5000,
+        headers: { 'User-Agent': 'lets-make-history' },
+      }, res => {
+        let data = '';
+        res.on('data', chunk => { data += chunk.toString(); });
+        res.on('end', () => {
+          if ((res.statusCode ?? 500) >= 400) return finish(null);
+
+          const trimmed = data.trim();
+          if (!trimmed) return finish(null);
+
+          try {
+            const asJson = JSON.parse(trimmed);
+            const candidate = String(asJson?.ip ?? '').trim();
+            return finish(candidate || null);
+          } catch {
+            return finish(trimmed);
+          }
+        });
+      });
+
+      req.on('timeout', () => {
+        req.destroy();
+        finish(null);
+      });
+      req.on('error', () => finish(null));
+    } catch {
+      finish(null);
+    }
+  });
+}
+
+async function resolveInternetBaseUrl (inviteConfig) {
+  const fromConfig = normalizeBaseUrl(inviteConfig.publicBaseUrl, inviteConfig.publicPort);
+  if (fromConfig) return { baseUrl: fromConfig, source: 'config' };
+
+  const fromEnv = normalizeBaseUrl(process.env.PUBLIC_BASE_URL ?? '', inviteConfig.publicPort);
+  if (fromEnv) return { baseUrl: fromEnv, source: 'env' };
+
+  if (inviteConfig.autoDetectPublicIp) {
+    const detectedIp = await detectPublicIp(inviteConfig.publicIpServiceUrl);
+    if (detectedIp) {
+      const fromAutoIp = normalizeBaseUrl(`http://${detectedIp}`, inviteConfig.publicPort);
+      if (fromAutoIp) return { baseUrl: fromAutoIp, source: 'auto-ip' };
+    }
+  }
+
+  return { baseUrl: null, source: 'none' };
+}
+
+async function openInviteSettingsFile () {
+  const candidatePaths = getInviteConfigCandidatePaths();
+  const existingPath = candidatePaths.find(configPath => fs.existsSync(configPath)) ?? INVITE_CONFIG_PATH;
+  if (!fs.existsSync(existingPath)) {
+    writeDefaultInviteConfig();
+  }
+  const error = await shell.openPath(existingPath);
+  if (error) {
+    dialog.showErrorBox('Unable to open invite settings', error);
+  }
+}
+
+function showInviteSetupInstructions (internetPlayerURL) {
+  const detailLines = [
+    'Internet Invite Setup',
+    '',
+    '1) Right-click the tray icon and choose "Open Invite Settings File".',
+    '2) Set publicBaseUrl in invite-settings.json.',
+    '3) Restart the app.',
+    '4) Use "Copy Player Link (Internet)" from the tray menu.',
+    '',
+    `Invite settings file:\n  ${INVITE_CONFIG_PATH}`,
+    '',
+    'Router/firewall steps:',
+    `- Forward TCP port ${PORT} to this machine`,
+    `- Allow inbound TCP ${PORT} in firewall`,
+    '',
+    internetPlayerURL
+      ? `Current internet invite:\n  ${internetPlayerURL}`
+      : 'Current internet invite: not available yet (configure settings or ensure public IP detection can reach the internet).',
+  ];
+
+  dialog.showMessageBox({
+    type: 'info',
+    title: "Let's Make History — Invite Setup",
+    message: 'Configure internet invites',
+    detail: detailLines.join('\n'),
+    buttons: ['OK'],
+  });
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 let tray       = null;
 let serverProc = null;
@@ -68,11 +264,18 @@ app.on('before-quit', () => {
 if (!app.requestSingleInstanceLock()) { app.quit(); process.exit(0); }
 
 app.whenReady().then(async () => {
+  const inviteConfig = loadInviteConfig();
+  const { baseUrl: internetBaseUrl, source: internetSource } = await resolveInternetBaseUrl(inviteConfig);
+
   const env = {
     ...process.env,
     PORT:       String(PORT),
     DB_PATH,
     STATIC_DIR,
+    PUBLIC_BASE_URL: inviteConfig.publicBaseUrl,
+    PUBLIC_PORT: String(inviteConfig.publicPort),
+    INTERNET_BASE_URL: internetBaseUrl ?? '',
+    INTERNET_INVITE_SOURCE: internetSource,
   };
 
   // ── Start the server ──────────────────────────────────────────────────────
@@ -116,16 +319,15 @@ app.whenReady().then(async () => {
   const localIP   = getLocalIP();
   const playerURL = `http://${localIP}:${PORT}/lobby`;
   const gmURL     = `http://localhost:${PORT}`;
+  const internetPlayerURL = internetBaseUrl ? `${internetBaseUrl}/lobby` : null;
 
   // ── Tray icon ─────────────────────────────────────────────────────────────
   const iconPath = path.join(__dirname, 'icons', 'icon.png');
-  const icon = require('fs').existsSync(iconPath)
+  const icon = fs.existsSync(iconPath)
     ? nativeImage.createFromPath(iconPath)
     : nativeImage.createEmpty();
 
-  tray = new Tray(icon);
-  tray.setToolTip("Let's Make History — Server Running");
-  tray.setContextMenu(Menu.buildFromTemplate([
+  const trayMenuItems = [
     { label: "Let's Make History", enabled: false },
     { label: `Listening on port ${PORT}`, enabled: false },
     { type: 'separator' },
@@ -133,10 +335,24 @@ app.whenReady().then(async () => {
     { label: 'Open Player Lobby',       click: () => shell.openExternal(playerURL) },
     { type: 'separator' },
     { label: 'Copy Player Link (LAN)',  click: () => clipboard.writeText(playerURL) },
+    ...(internetPlayerURL
+      ? [{ label: 'Copy Player Link (Internet)', click: () => clipboard.writeText(internetPlayerURL) }]
+      : [{ label: 'Copy Player Link (Internet)', enabled: false }]),
+    { label: 'Show Invite Setup Instructions', click: () => showInviteSetupInstructions(internetPlayerURL) },
+    { label: 'Open Invite Settings File', click: () => { openInviteSettingsFile(); } },
+    { label: 'Copy Invite Settings File Path', click: () => clipboard.writeText(INVITE_CONFIG_PATH) },
     { label: `Your LAN IP: ${localIP}`, enabled: false },
+    ...(internetBaseUrl
+      ? [{ label: `Internet Base URL: ${internetBaseUrl}`, enabled: false }]
+      : [{ label: 'Internet Base URL: not configured', enabled: false }]),
+    { label: `Internet Link Source: ${internetSource}`, enabled: false },
     { type: 'separator' },
     { label: 'Quit',                    click: () => app.quit() },
-  ]));
+  ];
+
+  tray = new Tray(icon);
+  tray.setToolTip("Let's Make History — Server Running");
+  tray.setContextMenu(Menu.buildFromTemplate(trayMenuItems));
   tray.on('click', () => tray.popUpContextMenu());
 
   // ── Open browser ─────────────────────────────────────────────────────────
@@ -151,6 +367,12 @@ app.whenReady().then(async () => {
       `GM Dashboard (this machine):\n  ${gmURL}`,
       '',
       `Player join link (share with players on your network):\n  ${playerURL}`,
+      ...(internetPlayerURL
+        ? ['', `Player join link (internet):\n  ${internetPlayerURL}`]
+        : []),
+      ...(internetPlayerURL
+        ? []
+        : ['', 'Internet invite link is not configured yet. Use tray menu -> Open Invite Settings File.']),
       '',
       'Right-click the tray icon to copy the link or quit.',
     ].join('\n'),

@@ -1,0 +1,26 @@
+# Self-hosted HTTPS reverse proxy for Let's Make History
+# Replace game.example.com with your real domain.
+
+{
+	# Optional email for ACME notices
+	email admin@example.com
+}
+
+game.example.com {
+	encode zstd gzip
+
+	# Basic hardening headers
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+	}
+
+	# Limit body size to reduce abuse (API payloads are small)
+	request_body {
+		max_size 2MB
+	}
+
+	reverse_proxy 127.0.0.1:3000
+}

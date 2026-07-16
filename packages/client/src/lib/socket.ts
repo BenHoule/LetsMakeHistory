@@ -17,8 +17,11 @@ export let socket: Socket<ServerToClientEvents, ClientToServerEvents> =
   undefined!;
 
 if (browser) {
-  // In production the env var is empty — connect to the same origin as the page.
-  const wsUrl = PUBLIC_WS_URL || window.location.origin;
+  // In production, sentinel/empty means connect to the same origin as the page.
+  const wsUrl =
+    PUBLIC_WS_URL && PUBLIC_WS_URL !== '__SAME_ORIGIN__'
+      ? PUBLIC_WS_URL
+      : window.location.origin;
   socket = io(wsUrl, { transports: ['websocket', 'polling'] });
 
   socket.on('error',            e => console.error('WS error:', e.code, e.message));

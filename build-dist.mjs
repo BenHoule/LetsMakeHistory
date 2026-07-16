@@ -70,8 +70,9 @@ const clientDir = path.join(REPO_ROOT, 'packages', 'client');
 const clientBuildEnv = {
   ...process.env,
   NODE_ENV: 'production',
-  PUBLIC_API_URL: process.env.PUBLIC_API_URL ?? 'http://localhost:3001',
-  PUBLIC_WS_URL: process.env.PUBLIC_WS_URL ?? 'http://localhost:3001',
+  // SvelteKit requires vars to exist at build time; sentinel means same-origin at runtime.
+  PUBLIC_API_URL: process.env.PUBLIC_API_URL ?? '__SAME_ORIGIN__',
+  PUBLIC_WS_URL: process.env.PUBLIC_WS_URL ?? '__SAME_ORIGIN__',
 };
 runPnpm(['run', 'build'], {
   cwd: clientDir,

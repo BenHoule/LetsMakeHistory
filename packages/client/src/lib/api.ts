@@ -1,5 +1,10 @@
 import { PUBLIC_API_URL } from '$env/static/public';
 
+const API_BASE =
+  PUBLIC_API_URL && PUBLIC_API_URL !== '__SAME_ORIGIN__'
+    ? PUBLIC_API_URL
+    : '';
+
 /**
  * Makes an HTTP request to the API.
  * @param method The HTTP method (e.g., 'GET', 'POST').
@@ -8,7 +13,7 @@ import { PUBLIC_API_URL } from '$env/static/public';
  * @returns The parsed JSON response.
  */
 async function request<T>(method: string, path: string, body?: unknown, extraHeaders?: Record<string, string>): Promise<T> {
-  const res = await fetch(`${PUBLIC_API_URL}${path}`, {
+  const res = await fetch(`${API_BASE}${path}`, {
     method,
     headers: {
       ...(body ? { 'Content-Type': 'application/json' } : {}),

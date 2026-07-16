@@ -11,6 +11,47 @@ import { randomUUID } from 'crypto';
 export function makeQueries(db: Database.Database) {
   /** Exposed so GameService can access the raw DB for NPC vote rolling. */
   const _db = db;
+
+  const addPlayerTx = db.transaction((
+    sessionId: string,
+    name: string,
+    region: string,
+    party: string,
+    cls: number,
+  ): { playerId: string; senatorId: string } => {
+    // Prefer an NPC seat matching the player's party; fall back to any NPC.
+    const seat = (
+      db.prepare(
+        `SELECT id FROM senators
+         WHERE session_id = ? AND region = ? AND class = ?
+           AND is_player = 0 AND party = ?
+         LIMIT 1`
+      ).get(sessionId, region, cls, party) ??
+      db.prepare(
+        `SELECT id FROM senators
+         WHERE session_id = ? AND region = ? AND class = ?
+           AND is_player = 0
+         LIMIT 1`
+      ).get(sessionId, region, cls)
+    ) as { id: string } | undefined;
+
+    if (!seat) {
+      throw new Error(`No available NPC seat for region=${region} class=${cls}`);
+    }
+
+    db.prepare('UPDATE senators SET is_player = 1, party = ? WHERE id = ?')
+      .run(party, seat.id);
+
+    const playerId = randomUUID();
+    db.prepare(`
+      INSERT INTO players
+        (id, session_id, name, region, party, class, senator_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(playerId, sessionId, name, region, party, cls, seat.id);
+
+    return { playerId, senatorId: seat.id };
+  });
+
   return {
     /**
      * Creates a new session in the database.
@@ -151,37 +192,9 @@ export function makeQueries(db: Database.Database) {
       party: string,
       cls: number,
     ): { playerId: string; senatorId: string } {
-      // Prefer an NPC seat matching the player's party; fall back to any NPC.
-      const seat = (
-        db.prepare(
-          `SELECT id FROM senators
-           WHERE session_id = ? AND region = ? AND class = ?
-             AND is_player = 0 AND party = ?
-           LIMIT 1`
-        ).get(sessionId, region, cls, party) ??
-        db.prepare(
-          `SELECT id FROM senators
-           WHERE session_id = ? AND region = ? AND class = ?
-             AND is_player = 0
-           LIMIT 1`
-        ).get(sessionId, region, cls)
-      ) as { id: string } | undefined;
-
-      if (!seat) throw new Error(
-        `No available NPC seat for region=${region} class=${cls}`
-      );
-
-      db.prepare('UPDATE senators SET is_player = 1, party = ? WHERE id = ?')
-        .run(party, seat.id);
-
-      const playerId = randomUUID();
-      db.prepare(`
-        INSERT INTO players
-          (id, session_id, name, region, party, class, senator_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).run(playerId, sessionId, name, region, party, cls, seat.id);
-
-      return { playerId, senatorId: seat.id };
+      // Immediate transaction prevents concurrent requests from claiming the
+      // same NPC seat under load.
+      return addPlayerTx.immediate(sessionId, name, region, party, cls);
     },
 
     listPlayers(sessionId: string) {

@@ -60,14 +60,19 @@
   });
 
   onMount(async () => {
-    // sessionStorage is per-tab (survives refresh, not shared across tabs).
-    // Fall back to localStorage only when sessionStorage is empty (e.g. first load after hard-nav).
-    const playerId =
-      sessionStorage.getItem(`lmh:player:${sessionId}`) ??
-      localStorage.getItem(`lmh:player:${sessionId}`) ??
-      'observer';
-    // Keep sessionStorage in sync so future refreshes don't need localStorage.
-    if (playerId !== 'observer') sessionStorage.setItem(`lmh:player:${sessionId}`, playerId);
+    // Per-tab identity: take explicit URL player first, then same-tab sessionStorage.
+    // Do not use localStorage here because it is shared across tabs and can cause
+    // multiple players to inherit the same senator identity.
+    const urlPlayer = page.url.searchParams.get('player')?.trim();
+    const storedPlayer = sessionStorage.getItem(`lmh:player:${sessionId}`);
+    const playerId = (urlPlayer || storedPlayer || 'observer');
+
+    if (playerId !== 'observer') {
+      sessionStorage.setItem(`lmh:player:${sessionId}`, playerId);
+    }
+
+    // Remove legacy cross-tab fallback data if it exists.
+    localStorage.removeItem(`lmh:player:${sessionId}`);
 
     // Restore player identity into the store so the senator banner renders on refresh.
     if (playerId !== 'observer') setPlayerId(playerId);

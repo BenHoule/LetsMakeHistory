@@ -3,6 +3,7 @@
   import { page } from '$app/state';
   import { onMount } from 'svelte';
   import { api } from '$lib/api.js';
+  import { runtimeConfig } from '$lib/runtime.js';
   import PlayerJoinForm from '$lib/components/PlayerJoinForm.svelte';
   import type { CreateSessionResponse } from '@lmh/types';
 
@@ -14,6 +15,11 @@
   let creating   = $state(false);
 
   let removed = $state(false);
+  const sharePlayerBaseUrl = $derived($runtimeConfig.sharePlayerBaseUrl ?? page.url.origin);
+
+  function getSharePlayerLink() {
+    return `${sharePlayerBaseUrl}/lobby?session=${sessionId}`;
+  }
 
   // If the URL has ?session=<id>, jump straight to the join form.
   onMount(() => {
@@ -43,8 +49,8 @@
     sessionId = joinId.trim();
   }
 
-  function onJoined(_playerId: string) {
-    goto(`/session/${sessionId}`);
+  function onJoined(playerId: string) {
+    goto(`/session/${sessionId}?player=${encodeURIComponent(playerId)}`);
   }
 </script>
 
@@ -89,10 +95,10 @@
         <div class="flex items-center gap-2 mt-2">
           <p class="text-xs text-gray-400">Share player link:</p>
           <code class="bg-white border rounded px-1 text-xs break-all">
-            {page.url.origin}/lobby?session={sessionId}
+            {getSharePlayerLink()}
           </code>
           <button
-            onclick={() => navigator.clipboard.writeText(`${page.url.origin}/lobby?session=${sessionId}`)}
+            onclick={() => navigator.clipboard.writeText(getSharePlayerLink())}
             class="shrink-0 text-xs bg-green-700 text-white px-2 py-0.5 rounded hover:bg-green-800">
             Copy
           </button>
