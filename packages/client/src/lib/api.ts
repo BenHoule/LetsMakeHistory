@@ -21,17 +21,27 @@ async function request<T>(method: string, path: string, body?: unknown, extraHea
     },
     body: body ? JSON.stringify(body) : undefined,
   });
-  if (!res.ok) {
-    throw new Error(`${method} ${path} \u2192 ${res.status}`);
-  }
-    let message = `${method} ${path} -> ${res.status}`;
+
+  // Some endpoints return empty bodies (e.g. 204), so parse text first.
+  const raw = await res.text();
+  let payload: T | { error?: string } | undefined;
+  if (raw) {
     try {
-      const payload = await res.json() as { error?: string };
-      if (payload?.error) message = payload.error;
+      payload = JSON.parse(raw) as T | { error?: string };
     } catch {
-      // Ignore unparseable error bodies and fall back to the HTTP status.
+      payload = undefined;
     }
+  }
+
+  if (!res.ok) {
+    const message =
+      payload && typeof payload === 'object' && 'error' in payload && typeof payload.error === 'string'
+        ? payload.error
+        : `${method} ${path} -> ${res.status}`;
     throw new Error(message);
+  }
+
+  return payload as T;
 }
 
 export const api = {

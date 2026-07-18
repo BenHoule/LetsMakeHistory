@@ -1,6 +1,6 @@
 {
   "name": "lmhistory-app",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Let's Make History — GM Companion App",
   "author": "Let's Make History Contributors",
   "main": "main.cjs",
@@ -78,6 +78,7 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
+      "include": "build/installer.nsh",
       "installerIcon": "icons/icon.ico",
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,

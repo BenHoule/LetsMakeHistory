@@ -748,6 +748,75 @@ function gmCheck(req: any, res: any): boolean {
   return true;
 }
 
+function parseLedgerBlock(ledgerBlock: string, fallbackTurnIndex: number, fallbackYear: number) {
+  const lines = ledgerBlock
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean)
+    .filter(line => line !== '```' && line.toUpperCase() !== 'TURN LEDGER');
+
+  let year = fallbackYear;
+  const header = lines.find(line => /turn\s+ledger|turn\s+\d+/i.test(line));
+  if (header) {
+    const match = header.match(/turn\s+(\d+)\s*[,\-:]\s*(\d{4})/i);
+    if (match) year = Number(match[2]);
+  }
+
+  const parsed = [] as Array<{ stat: import('@lmh/types').StatName; target: string; delta: number; reason: string }>;
+  const statMap: Record<string, import('@lmh/types').StatName> = {
+    approval: 'Approval',
+    recognition: 'Recognition',
+    rizz: 'Rizz',
+    party: 'Party',
+    region: 'Region',
+  };
+
+  for (const line of lines) {
+    if (/turn\s+ledger/i.test(line)) continue;
+    const parts = line.split('|').map(part => part.trim());
+    if (parts.length < 4) continue;
+    const [rawStat, rawTarget, rawDelta, ...reasonParts] = parts;
+    const stat = statMap[rawStat.toLowerCase()];
+    if (!stat) continue;
+    const delta = Number(rawDelta.replace(/^\+/, ''));
+    if (Number.isNaN(delta)) throw new Error(`Invalid delta in ledger row: ${line}`);
+    const reason = reasonParts.join(' | ').trim();
+    if (!rawTarget || !reason) throw new Error(`Ledger row is missing target or reason: ${line}`);
+    parsed.push({ stat, target: rawTarget, delta, reason });
+  }
+
+  if (parsed.length === 0) {
+    throw new Error('No parseable ledger rows found. Expected: Stat | Target | signed delta | reason');
+  }
+
+  return { deltas: parsed, turnIndex: fallbackTurnIndex, year };
+}
+
+function importLedgerForSession(sessionId: string, ledgerBlock: string) {
+  const session = queries.getSession(sessionId);
+  if (!session) throw new Error(`Session not found: ${sessionId}`);
+
+  const parsed = parseLedgerBlock(ledgerBlock, session.turn_index, session.year);
+  const applyLedgerTx = db.transaction((rows: typeof parsed.deltas) =>
+    rows.map(row => queries.applyStatDelta(sessionId, 'gm', row.stat, row.target, row.delta, row.reason))
+  );
+  const deltas = applyLedgerTx(parsed.deltas);
+  const updatedPlayers = mapPlayersForClient(sessionId);
+
+  for (const delta of deltas) {
+    io.to(`session:${sessionId}`).emit('stat_delta', delta);
+  }
+  io.to(`session:${sessionId}`).emit('players_updated', { players: updatedPlayers as any, seqId: Date.now() });
+  io.to(`session:${sessionId}`).emit('ledger_finalized', {
+    ledger: queries.getStatHistory(sessionId),
+    turnIndex: session.turn_index,
+    year: parsed.year,
+    seqId: Date.now(),
+  });
+
+  return deltas;
+}
+
 app.get('/api/v1/gm/sessions/:id/flags', (req, res) => {
   if (!gmCheck(req, res)) return;
   res.json({ flags: queries.getGMFlags(req.params.id) });
@@ -760,6 +829,18 @@ app.put('/api/v1/gm/sessions/:id/flags', (req, res) => {
     : [];
   queries.setGMFlags(req.params.id, flags);
   res.json({ flags });
+});
+
+app.post('/api/v1/gm/sessions/:id/ledger/import', (req, res) => {
+  if (!gmCheck(req, res)) return;
+  const ledgerBlock = typeof req.body?.ledgerBlock === 'string' ? req.body.ledgerBlock : '';
+  if (!ledgerBlock.trim()) return res.status(400).json({ error: 'ledgerBlock is required' });
+  try {
+    const deltas = importLedgerForSession(req.params.id, ledgerBlock);
+    res.json({ deltas });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+  }
 });
 
 app.get('/api/v1/gm/sessions/:id/full-state', (req, res) => {

@@ -1757,7 +1757,7 @@
 {:else if activeTab==='ledger'}
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
     <div>
-      <LedgerImporter {sessionId} />
+      <LedgerImporter {sessionId} {gmToken} />
       <div style="margin-top:10px;">
         <button onclick={() => statChangeOpen = !statChangeOpen}
           style="width:100%;padding:8px;background:#faf7f0;border:1px solid #232019;border-radius:4px;cursor:pointer;font-size:13px;font-weight:600;font-family:inherit;">

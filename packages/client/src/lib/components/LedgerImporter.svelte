@@ -1,16 +1,25 @@
 <script lang="ts">
-  import { socket } from '$lib/socket.js';
+  import { api } from '$lib/api.js';
 
-  let { sessionId }: { sessionId: string } = $props();
+  let { sessionId, gmToken }: { sessionId: string; gmToken: string } = $props();
 
   let block  = $state('');
   let status = $state('');
+  let submitting = $state(false);
 
-  function importLedger() {
+  async function importLedger() {
     if (!block.trim()) { status = 'Paste a Turn Ledger block first.'; return; }
-    socket.emit('gm_import_ledger', { sessionId, ledgerBlock: block });
-    status = 'Sent to server.';
-    block = '';
+    submitting = true;
+    status = '';
+    try {
+      const response = await api.gmPost<{ deltas: Array<unknown> }>(`/api/v1/gm/sessions/${sessionId}/ledger/import`, gmToken, { ledgerBlock: block });
+      status = `Applied ${response.deltas.length} ledger row${response.deltas.length === 1 ? '' : 's'}.`;
+      block = '';
+    } catch (err) {
+      status = err instanceof Error ? err.message : 'Failed to import ledger.';
+    } finally {
+      submitting = false;
+    }
   }
 </script>
 
@@ -29,7 +38,8 @@
   {#if status}<p class="text-xs text-teal-700">{status}</p>{/if}
   <button
     onclick={importLedger}
-    class="w-full bg-amber-700 text-white px-3 py-1.5 rounded text-sm hover:bg-amber-800">
-    Parse & Apply Ledger
+    disabled={submitting}
+    class="w-full bg-amber-700 text-white px-3 py-1.5 rounded text-sm hover:bg-amber-800 disabled:opacity-50">
+    {submitting ? 'Applying…' : 'Parse & Apply Ledger'}
   </button>
 </div>
