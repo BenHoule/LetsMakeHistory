@@ -1,43 +1,48 @@
 import { writable, derived } from 'svelte/store';
 import type {
-  SessionStore,
-  TurnState,
-  BillState,
-  PlayerState,
-  StatDeltaRecord,
-  SessionMeta,
-  RegionApprovalSnapshot,
-  VoteOption,
-  TurnPhase
+	SessionStore,
+	TurnState,
+	BillState,
+	PlayerState,
+	StatDeltaRecord,
+	SessionMeta,
+	RegionApprovalSnapshot,
+	VoteOption,
+	TurnPhase
 } from '@lmh/types';
 
 const INITIAL: SessionStore = {
-  session: null,
-  currentTurn: null,
-  phase: 'LOBBY',
-  players: [],
-  bills: [],
-  ledger: [],
-  mapData: {},
-  gmMode: false,
+	session: null,
+	currentTurn: null,
+	phase: 'LOBBY',
+	players: [],
+	bills: [],
+	ledger: [],
+	mapData: {},
+	gmMode: false
 };
 
 const { subscribe, update } = writable<SessionStore>(INITIAL);
 
+type SessionStoreWithPlayer = SessionStore & { _playerId?: string };
+
 export const sessionStore = { subscribe };
-export const phase = derived(sessionStore, s => s.phase);
-export const bills = derived(sessionStore, s => s.bills);
-export const players = derived(sessionStore, s => s.players);
-export const currentPlayerId = derived(sessionStore, s =>
-  // Treat s as a SessionStore that might also have an optional _playerId field
-  (s as SessionStore & { _playerId?: string})._playerId ?? null);
+export const phase = derived(sessionStore, (s) => s.phase);
+export const bills = derived(sessionStore, (s) => s.bills);
+export const players = derived(sessionStore, (s) => s.players);
+export const currentPlayerId = derived(
+	sessionStore,
+	(s) =>
+		// Treat s as a SessionStore that might also have an optional _playerId field
+		(s as SessionStoreWithPlayer)._playerId ?? null
+);
 
 /**
  * Sets the session metadata for the store.
  * @param session The new session metadata to set.
  */
 export function setSession(session: SessionMeta) {
-  update(s => ({ ...s, session, phase: session.phase }));
+	update((s) => ({ ...s, session, phase: session.phase }));
 }
 
 /**
@@ -45,7 +50,7 @@ export function setSession(session: SessionMeta) {
  * @param p The new phase to set for the session.
  */
 export function setPhase(p: TurnPhase) {
-  update(s => ({ ...s, phase: p }));
+	update((s) => ({ ...s, phase: p }));
 }
 
 /**
@@ -54,11 +59,11 @@ export function setPhase(p: TurnPhase) {
  * @param bills The list of bills associated with the new turn.
  */
 export function setTurn(turn: TurnState, bills: BillState[]) {
-  update(s => ({ ...s, currentTurn: turn, bills, phase: 'VOTING' }));
+	update((s) => ({ ...s, currentTurn: turn, bills, phase: 'VOTING' }));
 }
 
 export function setCurrentTurnOnly(turn: TurnState) {
-  update(s => ({ ...s, currentTurn: turn }));
+	update((s) => ({ ...s, currentTurn: turn }));
 }
 
 /**
@@ -66,7 +71,7 @@ export function setCurrentTurnOnly(turn: TurnState) {
  * @param delta The delta record to append.
  */
 export function appendDelta(delta: StatDeltaRecord) {
-  update(s => ({ ...s, ledger: [...s.ledger, delta] }));
+	update((s) => ({ ...s, ledger: [...s.ledger, delta] }));
 }
 
 /**
@@ -74,14 +79,14 @@ export function appendDelta(delta: StatDeltaRecord) {
  * @param ledger The new list of delta records to set for the session.
  */
 export function setLedger(ledger: StatDeltaRecord[], turnIndex?: number, year?: number) {
-  update(s => ({
-    ...s,
-    ledger,
-    // Update session metadata with the new turn counter if provided.
-    ...(s.session && turnIndex !== undefined
-      ? { session: { ...s.session, turnIndex, year: year ?? s.session.year } }
-      : {}),
-  }));
+	update((s) => ({
+		...s,
+		ledger,
+		// Update session metadata with the new turn counter if provided.
+		...(s.session && turnIndex !== undefined
+			? { session: { ...s.session, turnIndex, year: year ?? s.session.year } }
+			: {})
+	}));
 }
 
 /**
@@ -89,7 +94,7 @@ export function setLedger(ledger: StatDeltaRecord[], turnIndex?: number, year?: 
  * @param gmMode The new GM mode to set for the session.
  */
 export function setGMMode(gmMode: boolean) {
-  update(s => ({ ...s, gmMode }));
+	update((s) => ({ ...s, gmMode }));
 }
 
 /**
@@ -97,41 +102,44 @@ export function setGMMode(gmMode: boolean) {
  * @param id The player ID to set.
  */
 export function setPlayerId(id: string) {
-  update(s => ({ ...(s as any), _playerId: id }));
+	update((s) => ({ ...(s as SessionStoreWithPlayer), _playerId: id }));
 }
 
 export function setPlayers(p: PlayerState[]) {
-  update(s => ({ ...s, players: p }));
+	update((s) => ({ ...s, players: p }));
 }
 
 export function updatePlayerStat(
-  playerName: string,
-  stat: 'Approval' | 'Recognition' | 'Rizz',
-  delta: number,
+	playerName: string,
+	stat: 'Approval' | 'Recognition' | 'Rizz',
+	delta: number
 ) {
-  const col = stat.toLowerCase() as 'approval' | 'recognition' | 'rizz';
-  update(s => ({
-    ...s,
-    players: s.players.map(p =>
-      p.name === playerName ? { ...p, [col]: (p[col] as number) + delta } : p
-    ),
-  }));
+	const col = stat.toLowerCase() as 'approval' | 'recognition' | 'rizz';
+	update((s) => ({
+		...s,
+		players: s.players.map((p) =>
+			p.name === playerName ? { ...p, [col]: (p[col] as number) + delta } : p
+		)
+	}));
 }
 
 export function setMapData(mapData: RegionApprovalSnapshot) {
-  update(s => ({ ...s, mapData }));
+	update((s) => ({ ...s, mapData }));
 }
 
 export function setNationalStatus(financial: string, social: string, foreign: string) {
-  update(s => {
-    if (!s.currentTurn) return s;
-    return { ...s, currentTurn: { ...s.currentTurn, nationalStatus: { financial, social, foreign } } };
-  });
+	update((s) => {
+		if (!s.currentTurn) return s;
+		return {
+			...s,
+			currentTurn: { ...s.currentTurn, nationalStatus: { financial, social, foreign } }
+		};
+	});
 }
 
 export function recordBillVote(billId: string, vote: VoteOption) {
-  update(s => ({
-    ...s,
-    bills: s.bills.map(b => b.id === billId ? { ...b, playerVote: vote } : b),
-  }));
+	update((s) => ({
+		...s,
+		bills: s.bills.map((b) => (b.id === billId ? { ...b, playerVote: vote } : b))
+	}));
 }

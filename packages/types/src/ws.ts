@@ -212,6 +212,16 @@ export interface PlayersUpdatedEvent {
   seqId:   number;
 }
 
+export interface PlayerActionVotedEvent {
+  actionId:   string;
+  playerName: string;
+  vote:       VoteOption;
+}
+
+export interface PlayerRemovedEvent {
+  playerId: string;
+}
+
 // ---- Socket.io typed interface maps -----------------------------------------
 // Usage (server):  new Server<ClientToServerEvents, ServerToClientEvents>(...)
 // Usage (client):  io<ServerToClientEvents, ClientToServerEvents>(WS_URL)
@@ -247,5 +257,7 @@ export interface ServerToClientEvents {
   action_vote_result:         (e: ActionVoteResultEvent)          => void;
   visibility_updated:         (e: VisibilityUpdatedEvent)         => void;
   players_updated:            (e: PlayersUpdatedEvent)            => void;
+  player_action_voted:        (e: PlayerActionVotedEvent)         => void;
+  player_removed:             (e: PlayerRemovedEvent)             => void;
   error:                      (e: WSErrorEvent)                   => void;
 }

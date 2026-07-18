@@ -19,9 +19,7 @@ export default defineConfig({
 			},
 			// Production: static site served by Express.
 			// Development: adapter-auto (Vite dev server).
-			adapter: isProd
-				? adapterStatic({ fallback: 'index.html', strict: false })
-				: adapterAuto()
+			adapter: isProd ? adapterStatic({ fallback: 'index.html', strict: false }) : adapterAuto()
 		})
 	]
 });
