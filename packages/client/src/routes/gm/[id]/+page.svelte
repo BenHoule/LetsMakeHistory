@@ -1447,7 +1447,7 @@
       <details style="font-size:12px;"><summary style="cursor:pointer;color:#7a7362;">Per-seat breakdown</summary>
         <table style="width:100%;border-collapse:collapse;font-size:11px;margin-top:6px;">
           <thead><tr>{#each ['Region','Cls','Party','Occupant','Vote'] as h (h)}<th style="text-align:left;padding:3px 5px;background:#e8e1cc;font-size:10px;">{h}</th>{/each}</tr></thead>
-          <tbody>{#each billResult.seatResults as s (s.region)}<tr><td style="padding:3px 5px;">{s.region}</td><td style="padding:3px 5px;text-align:center;">{s.class}</td><td style="padding:3px 5px;">{s.party}</td><td style="padding:3px 5px;color:{s.is_player?'#1f3a5f':'#888'};">{s.player_name??'NPC'}</td><td style="padding:3px 5px;font-weight:700;color:{s.vote==='YEA'?'#3b6d11':s.vote==='NAY'?'#a32d2d':'#888'};">{s.vote}</td></tr>{/each}</tbody>
+          <tbody>{#each billResult.seatResults as s (s.region)}<tr><td style="padding:3px 5px;">{s.region}</td><td style="padding:3px 5px;text-align:center;">{s.class}</td><td style="padding:3px 5px;color:{pc(s.party)};font-weight:700;">{s.party}</td><td style="padding:3px 5px;color:{s.is_player?'#1f3a5f':'#888'};">{s.player_name??'NPC'}</td><td style="padding:3px 5px;font-weight:700;color:{s.vote==='YEA'?'#3b6d11':s.vote==='NAY'?'#a32d2d':'#888'};">{s.vote}</td></tr>{/each}</tbody>
         </table>
       </details>
     </div>
@@ -1465,7 +1465,7 @@
       <details style="font-size:12px;"><summary style="cursor:pointer;color:#7a7362;">Per-seat breakdown</summary>
         <table style="width:100%;border-collapse:collapse;font-size:11px;margin-top:6px;">
           <thead><tr>{#each ['Region','Cls','Party','Occupant','Vote'] as h (h)}<th style="text-align:left;padding:3px 5px;background:#e8e1cc;font-size:10px;">{h}</th>{/each}</tr></thead>
-          <tbody>{#each latestVoteResult.seatResults as s (s.id)}<tr><td style="padding:3px 5px;">{s.region}</td><td style="padding:3px 5px;text-align:center;">{s.class}</td><td style="padding:3px 5px;">{s.party}</td><td style="padding:3px 5px;color:{s.isPlayer?'#1f3a5f':'#888'};">{s.playerName??'NPC'}</td><td style="padding:3px 5px;font-weight:700;color:{s.vote==='YEA'?'#3b6d11':s.vote==='NAY'?'#a32d2d':'#7a7362'};">{s.vote}</td></tr>{/each}</tbody>
+          <tbody>{#each latestVoteResult.seatResults as s (s.id)}<tr><td style="padding:3px 5px;">{s.region}</td><td style="padding:3px 5px;text-align:center;">{s.class}</td><td style="padding:3px 5px;color:{pc(s.party)};font-weight:700;">{s.party}</td><td style="padding:3px 5px;color:{s.isPlayer?'#1f3a5f':'#888'};">{s.playerName??'NPC'}</td><td style="padding:3px 5px;font-weight:700;color:{s.vote==='YEA'?'#3b6d11':s.vote==='NAY'?'#a32d2d':'#7a7362'};">{s.vote}</td></tr>{/each}</tbody>
         </table>
       </details>
     </div>

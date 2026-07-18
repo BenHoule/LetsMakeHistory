@@ -1,7 +1,7 @@
 import { io, type Socket } from 'socket.io-client';
 import { get } from 'svelte/store';
 import { browser } from '$app/environment';
-import { PUBLIC_WS_URL } from '$env/static/public';
+import { env as publicEnv } from '$env/dynamic/public';
 import type { ServerToClientEvents, ClientToServerEvents } from '@lmh/types';
 import { sessionStore, setPhase, setTurn,
          appendDelta, setLedger, recordBillVote,
@@ -19,8 +19,8 @@ export let socket: Socket<ServerToClientEvents, ClientToServerEvents> =
 if (browser) {
   // In production, sentinel/empty means connect to the same origin as the page.
   const wsUrl =
-    PUBLIC_WS_URL && PUBLIC_WS_URL !== '__SAME_ORIGIN__'
-      ? PUBLIC_WS_URL
+    publicEnv.PUBLIC_WS_URL && publicEnv.PUBLIC_WS_URL !== '__SAME_ORIGIN__'
+      ? publicEnv.PUBLIC_WS_URL
       : window.location.origin;
   socket = io(wsUrl, { transports: ['websocket', 'polling'] });
 

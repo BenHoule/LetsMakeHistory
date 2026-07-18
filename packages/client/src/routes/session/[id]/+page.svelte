@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import { page } from '$app/state';
   import { socket } from '$lib/socket.js';
   import { api } from '$lib/api.js';
@@ -59,6 +59,28 @@
     return alerts;
   });
 
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+  async function hydrateSessionState() {
+    const state = await api.get<SessionStateResponse>(`/api/v1/sessions/${sessionId}`);
+    setSession(state.session);
+    setPlayers(state.players);
+
+    // Restore current turn so players don't lose news/events on refresh/reconnect.
+    const turn = await api.get<any>(`/api/v1/sessions/${sessionId}/turns/current`).catch(() => null);
+    if (turn) setCurrentTurnOnly(turn);
+
+    // Restore national status snapshot.
+    if ((state.session as any).national_status) {
+      try {
+        const ns = typeof (state.session as any).national_status === 'string'
+          ? JSON.parse((state.session as any).national_status)
+          : (state.session as any).national_status;
+        setNationalStatus(ns.financial ?? '', ns.social ?? '', ns.foreign ?? '');
+      } catch {}
+    }
+  }
+
   onMount(async () => {
     // Per-tab identity: take explicit URL player first, then same-tab sessionStorage.
     // Do not use localStorage here because it is shared across tabs and can cause
@@ -77,26 +99,34 @@
     // Restore player identity into the store so the senator banner renders on refresh.
     if (playerId !== 'observer') setPlayerId(playerId);
 
-    // Populate store with current session state before joining the socket room.
-    const state = await api.get<SessionStateResponse>(`/api/v1/sessions/${sessionId}`);
-    setSession(state.session);
-    setPlayers(state.players);
+    await hydrateSessionState();
 
-    // Restore current turn so players don't lose news/events on refresh
-    const turn = await api.get<any>(`/api/v1/sessions/${sessionId}/turns/current`).catch(() => null);
-    if (turn) setCurrentTurnOnly(turn);
+    const joinRoom = () => {
+      socket.emit('join_session', { sessionId, playerId });
+      // Rehydrate after reconnect in case phase/events changed while offline.
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      reconnectTimer = setTimeout(() => {
+        hydrateSessionState().catch(() => {});
+      }, 100);
+    };
 
-    // Restore national status
-    if ((state.session as any).national_status) {
-      try {
-        const ns = typeof (state.session as any).national_status === 'string'
-          ? JSON.parse((state.session as any).national_status)
-          : (state.session as any).national_status;
-        setNationalStatus(ns.financial ?? '', ns.social ?? '', ns.foreign ?? '');
-      } catch {}
+    joinRoom();
+    socket.on('connect', joinRoom);
+
+    return () => {
+      socket.off('connect', joinRoom);
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+    };
+  });
+
+  onDestroy(() => {
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
     }
-
-    socket.emit('join_session', { sessionId, playerId });
   });
 </script>
 

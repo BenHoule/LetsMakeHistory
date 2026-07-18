@@ -1,8 +1,8 @@
-import { PUBLIC_API_URL } from '$env/static/public';
+import { env as publicEnv } from '$env/dynamic/public';
 
 const API_BASE =
-  PUBLIC_API_URL && PUBLIC_API_URL !== '__SAME_ORIGIN__'
-    ? PUBLIC_API_URL
+  publicEnv.PUBLIC_API_URL && publicEnv.PUBLIC_API_URL !== '__SAME_ORIGIN__'
+    ? publicEnv.PUBLIC_API_URL
     : '';
 
 /**
