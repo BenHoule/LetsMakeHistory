@@ -1,7 +1,7 @@
 // WebSocket Interface Typing
 import type { StatDeltaRecord, StatName, SizeCategory } from './stats.js';
 import type {
-  TurnPhase, TurnState, SessionStore, BillState, VoteOption, ActionType,
+  TurnPhase, TurnState, SessionStore, BillState, VoteOption, ActionType, BillVoteSeatResult,
 } from './session.js';
 import type { SenateElectionResult, PresidentialElectionResult } from './api.js';
 
@@ -167,12 +167,22 @@ export interface LegislativeVoteRequestedEvent {
 
 /** Emitted to the session room after GM closes voting for a legislative action. */
 export interface ActionVoteResultEvent {
-  actionId:  string;
-  yeas:      number;
-  nays:      number;
-  abstains:  number;   // players who had not voted when GM closed the poll
-  passed:    boolean;
-  seqId:     number;
+  actionId:        string;
+  yeas:            number;
+  nays:            number;
+  abstains:        number;   // players who had not voted when GM closed the poll
+  passed:          boolean;
+  voteResult:      'PASSED' | 'FAILED' | 'VETOED' | 'OVERRIDE_PASSED';
+  yeaShare:        number;
+  senatePasses:    boolean;
+  regionsOK:       boolean;
+  regionsMajority: number;
+  presidentSigns:  boolean | null;
+  overridePassed:  boolean | null;
+  isAmendment:     boolean;
+  seatResults:     BillVoteSeatResult[];
+  regionTally:     Record<string, { yea: number; nay: number; abstain: number }>;
+  seqId:           number;
 }
 
 /** Current GM-controlled visibility settings for the session. */

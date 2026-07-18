@@ -9,7 +9,7 @@
   import { sessionStore, phase, setSession, setPlayers, players } from '../../../stores/session.js';
   import { addPlayerAction, pendingActions, pendingStatRolls, visibilitySettings, setVisibility } from '../../../stores/gm.js';
   import { pendingActionVotes } from '../../../stores/votes.js';
-  import type { ClientToServerEvents, Party, ServerToClientEvents, SessionStateResponse } from '@lmh/types';
+  import type { ActionVoteResultEvent, ClientToServerEvents, Party, PlayerState, ServerToClientEvents, SessionStateResponse } from '@lmh/types';
   import NationalStatusEditor from '$lib/components/NationalStatusEditor.svelte';
   import ActionQueue          from '$lib/components/ActionQueue.svelte';
   import StatRollPreview      from '$lib/components/StatRollPreview.svelte';
@@ -76,6 +76,11 @@
     reason: string;
   }
 
+  interface GmPlayerUpdateResponse {
+    players?: PlayerState[];
+    senators?: GmSenatorRow[];
+  }
+
   interface GmBillQueueRow {
     id: string;
     title: string | null;
@@ -100,7 +105,7 @@
     proposing_party: Party;
     is_amendment: boolean;
     is_npc: boolean;
-    vote_result: 'PASSED' | 'FAILED';
+    vote_result: 'PASSED' | 'FAILED' | 'VETOED' | 'OVERRIDE_PASSED';
     voted_at: string | null;
     yea_count: number | null;
     nay_count: number | null;
@@ -480,7 +485,13 @@
   let billResult     = $state<GmBillResult | null>(null);
   let billQueue      = $state<GmBillQueueRow[]>([]);
   let billHistory    = $state<GmBillHistoryRow[]>([]);
+  let latestVoteResult = $state<ActionVoteResultEvent | null>(null);
   let loading        = $state(true);
+  let savingPlayerId = $state<string | null>(null);
+  let rosterNotice   = $state<{ kind: 'success' | 'error'; text: string } | null>(null);
+  let rosterNoticeTimer: number | null = null;
+  let gmFlags        = $state<string[]>([]);
+  let newFlagText    = $state('');
 
   // Per-vote lean overrides keyed by actionId → { party → { leanIdx, rizzBoosted } }
   let voteLeans = $state<Record<string, Record<string, {leanIdx:number;rizzBoosted:boolean}>>>({});
@@ -509,6 +520,7 @@
   const tcReady        = $derived(
     tcEventCount>=3 && tcCourtCount>=1 && tcNpcBillCount>=3 && tcApCount>=1 && tcAmStCount>=1
   );
+  const dashboardFlags = $derived([...gmElectionAlerts(), ...gmFlags]);
 
   // Vote progress (updated server-side as each player votes)
   let voteProgress = $state<Record<string, {votedCount:number;totalPlayers:number;allVoted:boolean}>>({});
@@ -521,10 +533,50 @@
   };
   function pc(party: string): string { return PARTY_COLORS[party] ?? '#555'; }
 
+  function billResultColor(result: GmBillHistoryRow['vote_result'] | ActionVoteResultEvent['voteResult']) {
+    return result === 'PASSED' || result === 'OVERRIDE_PASSED' ? '#3b6d11' : result === 'VETOED' ? '#854f0b' : '#a32d2d';
+  }
+
+  async function saveGMFlags(flags: string[]) {
+    const normalized = flags.map(flag => flag.trim()).filter(Boolean);
+    const response = await api.gmPut<{ flags: string[] }>(`/api/v1/gm/sessions/${sessionId}/flags`, gmToken, { flags: normalized });
+    gmFlags = response.flags;
+  }
+
+  async function addGMFlag() {
+    if (!newFlagText.trim()) return;
+    await saveGMFlags([...gmFlags, newFlagText]);
+    newFlagText = '';
+  }
+
+  async function clearGMFlags() {
+    await saveGMFlags([]);
+  }
+
+  function setRosterNotice(kind: 'success' | 'error', text: string) {
+    rosterNotice = { kind, text };
+    if (typeof window === 'undefined') return;
+    if (rosterNoticeTimer) window.clearTimeout(rosterNoticeTimer);
+    rosterNoticeTimer = window.setTimeout(() => {
+      rosterNotice = null;
+      rosterNoticeTimer = null;
+    }, 3000);
+  }
+
   // Turn packet / export / import / reset
   let packetOpen  = $state(false);
   let packetText  = $state('');
   let resetArmed  = $state(false);
+  async function refreshGmState() {
+    await loadData();
+    await Promise.all([loadBillQueue(), loadBillHistory(), loadTurnContent()]);
+    packetOpen = false;
+    billResult = null;
+    presResult = null;
+    senResult = [];
+    spResult = null;
+  }
+
   function buildTurnPacket() {
     const turn = (get(sessionStore).session?.turnIndex ?? 0) + 1;
     const year = get(sessionStore).session?.year ?? 1901;
@@ -541,8 +593,8 @@
     packetText = out; packetOpen = !packetOpen;
   }
 
-  function exportState() {
-    const data = { sessionId, partyApprovals, regionalMods, players: get(players), statHistory };
+  async function exportState() {
+    const data = await api.gmGet<Record<string, unknown>>(`/api/v1/gm/sessions/${sessionId}/full-state`, gmToken);
     const a = document.createElement('a');
     a.href = URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));
     a.download = `lmh-T${($sessionStore.session?.turnIndex??0)+1}-${sessionId.slice(0,8)}.json`;
@@ -553,10 +605,19 @@
     const file = (e.target as HTMLInputElement).files?.[0];
     if (!file) return;
     const data = JSON.parse(await file.text());
-    if (data.partyApprovals) await api.gmPost(`/api/v1/gm/sessions/${sessionId}/party-approvals`, gmToken, data.partyApprovals);
-    if (data.regionalMods) await api.gmPost(`/api/v1/gm/sessions/${sessionId}/regional-modifiers`, gmToken, data.regionalMods);
-    await loadData();
+    await api.gmPut(`/api/v1/gm/sessions/${sessionId}/full-state`, gmToken, data);
+    await refreshGmState();
     (e.target as HTMLInputElement).value = '';
+  }
+
+  async function resetSessionState() {
+    await api.gmPost(`/api/v1/gm/sessions/${sessionId}/reset`, gmToken, {});
+    resetArmed = false;
+    await refreshGmState();
+  }
+
+  function startNewSession() {
+    window.location.href = '/lobby';
   }
 
   function partyDist(a: string, b: string) { return Math.abs(SPECTRUM[a]-SPECTRUM[b]); }
@@ -577,13 +638,14 @@
   async function loadData() {
     loading = true;
     try {
-      const [st,pa,rm,sen,hist,edRaw] = await Promise.all([
+      const [st,pa,rm,sen,hist,edRaw,flagResp] = await Promise.all([
         api.get<SessionStateResponse>(`/api/v1/sessions/${sessionId}`),
         api.get<GmPartyApprovalRow[]>(`/api/v1/sessions/${sessionId}/party-approvals`),
         api.get<GmRegionalModifierRow[]>(`/api/v1/sessions/${sessionId}/regional-modifiers`),
         api.get<GmSenatorRow[]>(`/api/v1/sessions/${sessionId}/senators`),
         api.get<GmStatHistoryRow[]>(`/api/v1/sessions/${sessionId}/stat-history`),
         api.get<GmElectionData>(`/api/v1/sessions/${sessionId}/election-data`),
+        api.gmGet<{ flags: string[] }>(`/api/v1/gm/sessions/${sessionId}/flags`, gmToken),
       ]);
       setSession(st.session); setPlayers(st.players);
       partyApprovals = Object.fromEntries(pa.map(r => [r.party, r.approval])) as Record<string, number>;
@@ -593,16 +655,31 @@
       senators = sen;
       statHistory = hist;
       ed = edRaw;
+      gmFlags = flagResp.flags;
       if (ed?.nextSenateClass) senClassPick = ed.nextSenateClass;
     } finally { loading = false; }
   }
 
+  async function savePlayerEdits(playerId: string, patch: Partial<Pick<PlayerState, 'party' | 'region' | 'class' | 'approval' | 'recognition' | 'rizz'>>) {
+    savingPlayerId = playerId;
+    rosterNotice = null;
+    try {
+      const player = get(players).find(p => p.id === playerId);
+      const response = await api.gmPost<GmPlayerUpdateResponse>(`/api/v1/gm/sessions/${sessionId}/players/${playerId}`, gmToken, patch);
+      if (response.players) setPlayers(response.players);
+      if (response.senators) senators = response.senators;
+      setRosterNotice('success', `Saved ${player?.name ?? 'player'} updates.`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to save player changes.';
+      setRosterNotice('error', message);
+    } finally {
+      savingPlayerId = null;
+    }
+  }
+
   onMount(async () => {
     gmToken = localStorage.getItem(`lmh:gm:${sessionId}`) ?? '';
-    await loadData();
-    loadBillQueue();
-    loadBillHistory();
-    loadTurnContent();
+    await refreshGmState();
     gmSocket.on('stat_delta', () => {
       api.get<GmPartyApprovalRow[]>(`/api/v1/sessions/${sessionId}/party-approvals`).then(pa => { partyApprovals = Object.fromEntries(pa.map(r => [r.party, r.approval])) as Record<string, number>; });
       api.get<GmStatHistoryRow[]>(`/api/v1/sessions/${sessionId}/stat-history`).then(h => { statHistory = h; });
@@ -618,7 +695,7 @@
     gmSocket.on('bill_queued', () => { loadBillQueue(); });
     gmSocket.on('bill_queue_updated', () => { loadBillQueue(); });
     // Refresh bill history after each vote closes
-    gmSocket.on('action_vote_result', () => { loadBillHistory(); loadBillQueue(); });
+    gmSocket.on('action_vote_result', (e) => { latestVoteResult = e; loadBillHistory(); loadBillQueue(); });
     // Initialise per-vote lean table when a vote opens
     gmSocket.on('legislative_vote_requested', e => {
       getVoteLean(e.actionId, e.party);
@@ -811,10 +888,14 @@
     <input type="file" accept="application/json" onchange={importState} style="display:none;" />
   </label>
   <button
-    onclick={() => { if(!resetArmed){resetArmed=true;setTimeout(()=>resetArmed=false,3000);} else { window.location.href='/lobby'; } }}
+    onclick={() => { if(!resetArmed){resetArmed=true;setTimeout(()=>resetArmed=false,3000);} else { resetSessionState(); } }}
     style="padding:6px 12px; border-radius:4px; cursor:pointer; font-size:13px; font-weight:600; font-family:inherit;
            background:{resetArmed?'#a32d2d':'#faf7f0'}; color:{resetArmed?'#fff':'#a32d2d'}; border:1px solid #a32d2d;">
-    {resetArmed ? 'Click again to confirm' : 'New Session'}
+    {resetArmed ? 'Click again to confirm' : 'Reset to Game Start'}
+  </button>
+  <button onclick={startNewSession}
+    style="padding:6px 12px; background:#faf7f0; border:1px solid #232019; border-radius:4px; cursor:pointer; font-size:13px; font-weight:600; font-family:inherit;">
+    New Session
   </button>
   {#if $pendingActionVotes.length > 0}
     <span style="font-size:12px; color:#854f0b; font-weight:700;">
@@ -893,6 +974,45 @@
         </tbody>
       </table>
     </div>
+  </div>
+  <div style="background:#f1ecdf;border:1px solid #d8d0b8;border-radius:6px;padding:14px;margin-bottom:14px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:10px;border-bottom:1px solid #b8ae8e;padding-bottom:6px;">
+      <h2 style="font-family:Georgia,serif;font-size:15px;margin:0;">Flags for the GM</h2>
+      <button onclick={clearGMFlags} disabled={gmFlags.length===0}
+        style="padding:4px 10px;background:#faf7f0;border:1px solid #a32d2d;border-radius:4px;cursor:pointer;font-size:12px;font-weight:600;font-family:inherit;color:#a32d2d;opacity:{gmFlags.length===0?'.5':'1'};">
+        Clear Manual Flags
+      </button>
+    </div>
+    <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:10px;">
+      <div style="flex:1;min-width:240px;">
+        <label for="gm-flag-input" style="font-size:12px;color:#7a7362;display:block;margin-bottom:3px;">Add manual flag</label>
+        <input id="gm-flag-input" type="text" bind:value={newFlagText} placeholder="Reminder or follow-up for the GM"
+          onkeydown={(e) => { if (e.key === 'Enter') addGMFlag(); }}
+          style="width:100%;font-size:13px;padding:5px 8px;border:1px solid #b8ae8e;border-radius:4px;background:#faf7f0;" />
+      </div>
+      <button onclick={addGMFlag} disabled={!newFlagText.trim()}
+        style="padding:7px 14px;background:#1f3a5f;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:13px;font-weight:700;font-family:inherit;opacity:{newFlagText.trim()?'1':'.5'};">
+        Add Flag
+      </button>
+    </div>
+    {#if dashboardFlags.length === 0}
+      <p style="color:#7a7362;font-style:italic;font-size:13px;">No open flags.</p>
+    {:else}
+      <div style="display:grid;gap:8px;">
+        {#each gmElectionAlerts() as flag (flag)}
+          <div style="background:#fff8f0;border-left:3px solid #854f0b;border-radius:4px;padding:8px 10px;font-size:13px;display:flex;justify-content:space-between;gap:12px;align-items:center;">
+            <span>{flag}</span>
+            <span style="font-size:10px;color:#854f0b;font-weight:700;text-transform:uppercase;">Auto</span>
+          </div>
+        {/each}
+        {#each gmFlags as flag, idx (`${idx}-${flag}`)}
+          <div style="background:#faf7f0;border-left:3px solid #7a2222;border-radius:4px;padding:8px 10px;font-size:13px;display:flex;justify-content:space-between;gap:12px;align-items:center;">
+            <span>{flag}</span>
+            <span style="font-size:10px;color:#7a2222;font-weight:700;text-transform:uppercase;">Manual</span>
+          </div>
+        {/each}
+      </div>
+    {/if}
   </div>
   <div style="background:#f1ecdf;border:1px solid #d8d0b8;border-radius:6px;padding:14px;margin-top:14px;">
     <h2 style="font-family:Georgia,serif;font-size:15px;margin:0 0 10px;border-bottom:1px solid #b8ae8e;padding-bottom:6px;">National Status</h2>
@@ -1096,7 +1216,12 @@
   </div>
 
 {:else if activeTab==='roster'}
-  <div style="margin-bottom:14px;"><PlayerStatsTable /></div>
+  {#if rosterNotice}
+    <div style="margin-bottom:10px;padding:10px 12px;border-radius:6px;border:1px solid {rosterNotice.kind==='success' ? '#3b6d11' : '#a32d2d'};background:{rosterNotice.kind==='success' ? '#eef6df' : '#fbe8e8'};color:{rosterNotice.kind==='success' ? '#2f5b0b' : '#8a1f1f'};font-size:13px;font-weight:600;">
+      {rosterNotice.text}
+    </div>
+  {/if}
+  <div style="margin-bottom:14px;"><PlayerStatsTable editable={true} {savingPlayerId} onSavePlayer={savePlayerEdits} /></div>
   <div style="background:#f1ecdf;border:1px solid #d8d0b8;border-radius:6px;padding:14px;">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;border-bottom:1px solid #b8ae8e;padding-bottom:6px;">
       <h2 style="font-family:Georgia,serif;font-size:15px;margin:0;">Senate Roster</h2>
@@ -1177,7 +1302,7 @@
         </div>
         <button onclick={() => closeVoteWithLeans(v.actionId)}
           style="padding:7px 14px;background:#7a2222;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:12px;font-weight:700;font-family:inherit;white-space:nowrap;">
-          Close &amp; Roll NPC
+          Resolve Vote
         </button>
       </div>
       <!-- Per-vote lean table -->
@@ -1328,6 +1453,24 @@
     </div>
   {/if}
 
+  {#if latestVoteResult}
+    <div style="background:#f1ecdf;border:1px solid #d8d0b8;border-radius:6px;padding:14px;margin-bottom:14px;">
+      <h2 style="font-family:Georgia,serif;font-size:15px;margin:0 0 8px;">Last Resolved Vote</h2>
+      <p style="font-size:13px;margin:0 0 4px;">YEA {latestVoteResult.yeas} &nbsp; NAY {latestVoteResult.nays} &nbsp; ABSTAIN {latestVoteResult.abstains} &nbsp; ({(latestVoteResult.yeaShare*100).toFixed(1)}% of votes cast)</p>
+      <p style="font-size:13px;margin:0 0 4px;">Senate: {latestVoteResult.senatePasses?'passes':'fails'} &nbsp; Regions: {latestVoteResult.regionsMajority}/6 {latestVoteResult.isAmendment?'(needs 4)':''} &nbsp; President: {latestVoteResult.presidentSigns===null?'not reached':latestVoteResult.presidentSigns?'signs':'vetoes'}</p>
+      {#if latestVoteResult.overridePassed !== null}
+        <p style="font-size:12px;margin:0 0 4px;color:#7a7362;">Override attempt: {latestVoteResult.overridePassed ? 'succeeds' : 'fails'}</p>
+      {/if}
+      <p style="font-size:16px;font-weight:700;color:{billResultColor(latestVoteResult.voteResult)};margin:4px 0 8px;">{latestVoteResult.voteResult}</p>
+      <details style="font-size:12px;"><summary style="cursor:pointer;color:#7a7362;">Per-seat breakdown</summary>
+        <table style="width:100%;border-collapse:collapse;font-size:11px;margin-top:6px;">
+          <thead><tr>{#each ['Region','Cls','Party','Occupant','Vote'] as h (h)}<th style="text-align:left;padding:3px 5px;background:#e8e1cc;font-size:10px;">{h}</th>{/each}</tr></thead>
+          <tbody>{#each latestVoteResult.seatResults as s (s.id)}<tr><td style="padding:3px 5px;">{s.region}</td><td style="padding:3px 5px;text-align:center;">{s.class}</td><td style="padding:3px 5px;">{s.party}</td><td style="padding:3px 5px;color:{s.isPlayer?'#1f3a5f':'#888'};">{s.playerName??'NPC'}</td><td style="padding:3px 5px;font-weight:700;color:{s.vote==='YEA'?'#3b6d11':s.vote==='NAY'?'#a32d2d':'#7a7362'};">{s.vote}</td></tr>{/each}</tbody>
+        </table>
+      </details>
+    </div>
+  {/if}
+
   <!-- ── Bill History ── -->
   <div style="background:#f1ecdf;border:1px solid #d8d0b8;border-radius:6px;padding:14px;margin-top:14px;">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;border-bottom:1px solid #b8ae8e;padding-bottom:6px;">
@@ -1358,7 +1501,7 @@
               <td style="padding:4px 6px;color:#3b6d11;font-weight:600;">{b.yea_count ?? '—'}</td>
               <td style="padding:4px 6px;color:#a32d2d;font-weight:600;">{b.nay_count ?? '—'}</td>
               <td style="padding:4px 6px;color:#7a7362;">{b.abstain_count ?? '—'}</td>
-              <td style="padding:4px 6px;font-weight:700;color:{b.vote_result==='PASSED'?'#3b6d11':'#a32d2d'};">{b.vote_result}</td>
+              <td style="padding:4px 6px;font-weight:700;color:{billResultColor(b.vote_result)};">{b.vote_result}</td>
             </tr>
           {/each}
         </tbody>

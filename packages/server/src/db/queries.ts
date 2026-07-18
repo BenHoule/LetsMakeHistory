@@ -52,6 +52,60 @@ export function makeQueries(db: Database.Database) {
     return { playerId, senatorId: seat.id };
   });
 
+  const updatePlayerProfileTx = db.transaction((
+    sessionId: string,
+    playerId: string,
+    updates: { party?: string; region?: string; class?: number },
+  ): void => {
+    const player = db.prepare(`
+      SELECT id, party, region, class, senator_id
+      FROM players
+      WHERE session_id = ? AND id = ?
+    `).get(sessionId, playerId) as
+      | { id: string; party: string; region: string; class: number; senator_id: string }
+      | undefined;
+    if (!player) throw new Error(`Player not found: ${playerId}`);
+
+    const nextParty = updates.party ?? player.party;
+    const nextRegion = updates.region ?? player.region;
+    const nextClass = updates.class ?? player.class;
+    const movesSeat = nextRegion !== player.region || nextClass !== player.class;
+
+    let targetSenatorId = player.senator_id;
+    if (movesSeat) {
+      const targetSeat = (
+        db.prepare(`
+          SELECT id FROM senators
+          WHERE session_id = ? AND region = ? AND class = ?
+            AND is_player = 0 AND party = ?
+          LIMIT 1
+        `).get(sessionId, nextRegion, nextClass, nextParty) ??
+        db.prepare(`
+          SELECT id FROM senators
+          WHERE session_id = ? AND region = ? AND class = ?
+            AND is_player = 0
+          LIMIT 1
+        `).get(sessionId, nextRegion, nextClass)
+      ) as { id: string } | undefined;
+
+      if (!targetSeat) {
+        throw new Error(`No available NPC seat for region=${nextRegion} class=${nextClass}`);
+      }
+
+      db.prepare('UPDATE senators SET is_player = 0 WHERE id = ?').run(player.senator_id);
+      db.prepare('UPDATE senators SET is_player = 1, party = ? WHERE id = ?').run(nextParty, targetSeat.id);
+      targetSenatorId = targetSeat.id;
+    } else if (nextParty !== player.party) {
+      db.prepare('UPDATE senators SET party = ? WHERE id = ?').run(nextParty, player.senator_id);
+    }
+
+    db.prepare(`
+      UPDATE players
+      SET party = ?, region = ?, class = ?, senator_id = ?
+      WHERE session_id = ? AND id = ?
+    `).run(nextParty, nextRegion, nextClass, targetSenatorId, sessionId, playerId);
+  });
+
   return {
     /**
      * Creates a new session in the database.
@@ -203,6 +257,43 @@ export function makeQueries(db: Database.Database) {
       ).all(sessionId);
     },
 
+    updatePlayerStats(
+      sessionId: string,
+      playerId: string,
+      updates: { approval?: number; recognition?: number; rizz?: number },
+    ): void {
+      const row = db.prepare(
+        'SELECT id, approval, recognition, rizz FROM players WHERE session_id = ? AND id = ?'
+      ).get(sessionId, playerId) as
+        | { id: string; approval: number; recognition: number; rizz: number }
+        | undefined;
+      if (!row) throw new Error(`Player not found: ${playerId}`);
+
+      const nextApproval = updates.approval === undefined
+        ? row.approval
+        : Math.max(BOUNDS.Approval[0], Math.min(BOUNDS.Approval[1], updates.approval));
+      const nextRecognition = updates.recognition === undefined
+        ? row.recognition
+        : Math.max(BOUNDS.Recognition[0], Math.min(BOUNDS.Recognition[1], updates.recognition));
+      const nextRizz = updates.rizz === undefined
+        ? row.rizz
+        : Math.max(BOUNDS.Rizz[0], Math.min(BOUNDS.Rizz[1], updates.rizz));
+
+      db.prepare(`
+        UPDATE players
+        SET approval = ?, recognition = ?, rizz = ?
+        WHERE session_id = ? AND id = ?
+      `).run(nextApproval, nextRecognition, nextRizz, sessionId, playerId);
+    },
+
+    updatePlayerProfile(
+      sessionId: string,
+      playerId: string,
+      updates: { party?: string; region?: string; class?: number },
+    ): void {
+      updatePlayerProfileTx.immediate(sessionId, playerId, updates);
+    },
+
     getNpcSenators(sessionId: string): Array<{ party: string }> {
       return db.prepare(
         'SELECT party FROM senators WHERE session_id = ? AND is_player = 0'
@@ -292,6 +383,22 @@ export function makeQueries(db: Database.Database) {
         leftLeanBias:       row?.left_lean_bias        ?? 0.3,
         pendingNominees:    row?.pending_nominees ? JSON.parse(row.pending_nominees) : null,
       };
+    },
+
+    getGMFlags(sessionId: string): string[] {
+      const row = db.prepare('SELECT gm_flags FROM sessions WHERE id = ?').get(sessionId) as { gm_flags: string | null } | undefined;
+      if (!row?.gm_flags) return [];
+      try {
+        const parsed = JSON.parse(row.gm_flags);
+        return Array.isArray(parsed) ? parsed.filter((flag): flag is string => typeof flag === 'string') : [];
+      } catch {
+        return [];
+      }
+    },
+
+    setGMFlags(sessionId: string, flags: string[]): void {
+      db.prepare('UPDATE sessions SET gm_flags = ? WHERE id = ?')
+        .run(flags.length ? JSON.stringify(flags) : null, sessionId);
     },
 
     updateElectionSettings(sessionId: string, patch: Record<string, unknown>): void {
@@ -624,7 +731,7 @@ export function makeQueries(db: Database.Database) {
       `).all(sessionId) as any[];
     },
 
-    markBillVoted(billId: string, result: 'PASSED' | 'FAILED', counts?: {yea:number;nay:number;abstain:number}): void {
+    markBillVoted(billId: string, result: 'PASSED' | 'FAILED' | 'VETOED' | 'OVERRIDE_PASSED', counts?: {yea:number;nay:number;abstain:number}): void {
       db.prepare(`UPDATE bills SET vote_result = ?, voted_at = ?, yea_count = ?, nay_count = ?, abstain_count = ? WHERE id = ?`)
         .run(result, new Date().toISOString(), counts?.yea ?? null, counts?.nay ?? null, counts?.abstain ?? null, billId);
     },
@@ -639,7 +746,7 @@ export function makeQueries(db: Database.Database) {
         FROM bills b
         LEFT JOIN players p ON p.id = b.source_player_id
         LEFT JOIN turns   t ON t.id = b.turn_id
-        WHERE b.session_id = ? AND b.vote_result IN ('PASSED','FAILED')
+        WHERE b.session_id = ? AND b.vote_result IN ('PASSED','FAILED','VETOED','OVERRIDE_PASSED')
         ORDER BY b.voted_at DESC
         LIMIT 200
       `).all(sessionId) as any[];

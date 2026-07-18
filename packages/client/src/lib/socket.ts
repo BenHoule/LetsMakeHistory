@@ -108,7 +108,7 @@ if (browser) {
       resolvedAt: new Date().toISOString(),
     });
     pushNotification(
-      `Legislative vote: ${e.passed ? 'PASSED' : 'FAILED'} (Yea ${e.yeas}, Nay ${e.nays}, Abstain ${e.abstains})`,
+      `Legislative vote: ${e.voteResult} (Yea ${e.yeas}, Nay ${e.nays}, Abstain ${e.abstains})`,
       e.passed,
     );
   });

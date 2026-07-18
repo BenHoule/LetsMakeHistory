@@ -15,6 +15,10 @@
   let open    = $state(false);
   let loading = $state(false);
 
+  function resultColor(result: string) {
+    return result === 'PASSED' || result === 'OVERRIDE_PASSED' ? '#5fa33b' : result === 'VETOED' ? '#c58b2d' : '#c0392b';
+  }
+
   async function load() {
     loading = true;
     entries = await api.get<BillEntry[]>(`/api/v1/sessions/${sessionId}/bill-history`).catch(() => []);
@@ -60,7 +64,7 @@
                 <td style="padding:3px 5px;color:#5fa33b;font-weight:600;">{b.yea_count ?? '—'}</td>
                 <td style="padding:3px 5px;color:#c0392b;font-weight:600;">{b.nay_count ?? '—'}</td>
                 <td style="padding:3px 5px;color:#7a6a44;">{b.abstain_count ?? '—'}</td>
-                <td style="padding:3px 5px;font-weight:700;color:{b.vote_result==='PASSED'?'#5fa33b':'#c0392b'};">{b.vote_result}</td>
+                <td style="padding:3px 5px;font-weight:700;color:{resultColor(b.vote_result)};">{b.vote_result}</td>
               </tr>
             {/each}
           </tbody>

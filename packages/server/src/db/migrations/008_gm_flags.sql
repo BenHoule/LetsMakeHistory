@@ -1,0 +1,1 @@
+ALTER TABLE sessions ADD COLUMN gm_flags TEXT;

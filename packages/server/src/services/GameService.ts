@@ -3,7 +3,7 @@ import type Database from 'better-sqlite3';
 import type { Server as IOServer } from 'socket.io';
 import type {
   ClientToServerEvents, ServerToClientEvents, TurnPhase, TurnState,
-  HeadlineRecord, EventRecord, NationalStatus, ActionType, VisibilitySettings,
+  HeadlineRecord, EventRecord, NationalStatus, ActionType, VisibilitySettings, BillVoteSeatResult,
 } from '@lmh/types';
 import { makeRNG, rollTrigger, rollSize, rollDirection, rollSeat, spectrumDistance } from '@lmh/rules';
 import { makeQueries } from '../db/queries.js';
@@ -465,40 +465,94 @@ export function makeGameService(
     if (!pending) return;
     pendingVotesMap.delete(actionId);
 
-    // Count player votes; abstentions excluded from denominator per rules.
-    let yeas = 0, nays = 0;
-    for (const v of pending.playerVotes.values()) {
-      if (v === 'YEA') yeas++; else nays++;
-    }
-    const totalPlayers = queries.listPlayers(sessionId).length;
-    const abstains = Math.max(0, totalPlayers - pending.playerVotes.size);
-
     const LEAN_PROBS = [0.10, 0.30, 0.50, 0.70, 0.90];
+    const bill = queries.getBill(actionId);
+    const proposerParty = (bill?.proposing_party ?? pending.action.party) as import('@lmh/types').Party;
+    const presidentParty = (queries.getElectionData(sessionId).presidentParty ?? 'Progressive') as import('@lmh/types').Party;
+    const spectrumIndex: Record<string, number> = { Progressive: 0, Unionist: 1, Whig: 2, Conservative: 3 };
+    const defaultLeanIdx = (voterParty: string, proposingParty: string): number => {
+      const dist = Math.abs((spectrumIndex[voterParty] ?? 0) - (spectrumIndex[proposingParty] ?? 0));
+      return [4, 3, 1, 0][dist] ?? 0;
+    };
 
-    // Roll NPC senator votes using lean overrides (if provided) or default rollSeat
-    const seats = queries.getNpcSenators(sessionId);
+    let yeas = 0;
+    let nays = 0;
+    let abstains = 0;
+    const seatResults: BillVoteSeatResult[] = [];
+    const regionTally: Record<string, { yea: number; nay: number; abstain: number }> = {};
+    const senateSeats = queries.getAllSenators(sessionId);
     const rng = makeRNG(randomBytes(4).readUInt32BE());
-    for (const seat of seats) {
-      let result: 'YEA' | 'NAY';
-      const ov = leanOverrides?.[seat.party];
-      if (ov !== undefined) {
-        const boostedIdx = ov.rizzBoosted ? Math.min(4, ov.leanIdx + 1) : ov.leanIdx;
-        result = rng() < LEAN_PROBS[boostedIdx] ? 'YEA' : 'NAY';
+
+    for (const seat of senateSeats) {
+      const isPlayer = !!seat.is_player;
+      let vote: 'YEA' | 'NAY' | 'ABSTAIN';
+
+      if (isPlayer && seat.player_id) {
+        vote = pending.playerVotes.get(seat.player_id) ?? 'ABSTAIN';
       } else {
-        result = rollSeat(
-          seat.party as import('@lmh/types').Party,
-          pending.action.party as import('@lmh/types').Party,
-          false, rng,
-        );
+        const ov = leanOverrides?.[seat.party];
+        if (ov !== undefined) {
+          const boostedIdx = ov.rizzBoosted ? Math.min(4, ov.leanIdx + 1) : ov.leanIdx;
+          vote = rng() < LEAN_PROBS[boostedIdx] ? 'YEA' : 'NAY';
+        } else {
+          vote = rollSeat(
+            seat.party as import('@lmh/types').Party,
+            proposerParty,
+            false, rng,
+          );
+        }
       }
-      if (result === 'YEA') yeas++; else nays++;
+
+      if (vote === 'YEA') yeas++;
+      else if (vote === 'NAY') nays++;
+      else abstains++;
+
+      const region = (regionTally[seat.region] ??= { yea: 0, nay: 0, abstain: 0 });
+      if (vote === 'YEA') region.yea++;
+      else if (vote === 'NAY') region.nay++;
+      else region.abstain++;
+
+      seatResults.push({
+        id: seat.id,
+        region: seat.region as import('@lmh/types').Region,
+        class: seat.class as 1 | 2 | 3,
+        party: seat.party as import('@lmh/types').Party,
+        playerName: seat.player_name,
+        isPlayer,
+        vote,
+      });
     }
 
-    const passed = yeas > nays;
+    const castVotes = yeas + nays;
+    const yeaShare = castVotes > 0 ? yeas / castVotes : 0;
+    const threshold = bill?.is_amendment ? 0.75 : 0.5;
+    const senatePasses = yeaShare > threshold;
+    const regionsMajority = Object.values(regionTally).filter(region => region.yea > region.nay).length;
+    const regionsOK = bill?.is_amendment ? regionsMajority >= 4 : true;
+
+    let presidentSigns: boolean | null = null;
+    let overridePassed: boolean | null = null;
+    let voteResult: 'PASSED' | 'FAILED' | 'VETOED' | 'OVERRIDE_PASSED' = 'FAILED';
+    if (senatePasses && regionsOK) {
+      const presidentOverride = leanOverrides?.['__president__'];
+      const presidentLeanIdx = presidentOverride
+        ? (presidentOverride.rizzBoosted ? Math.min(4, presidentOverride.leanIdx + 1) : presidentOverride.leanIdx)
+        : defaultLeanIdx(presidentParty, proposerParty);
+      presidentSigns = rng() < LEAN_PROBS[presidentLeanIdx];
+      if (presidentSigns) {
+        voteResult = 'PASSED';
+      } else if (!bill?.is_amendment) {
+        overridePassed = yeaShare >= (2 / 3);
+        voteResult = overridePassed ? 'OVERRIDE_PASSED' : 'VETOED';
+      } else {
+        voteResult = 'VETOED';
+      }
+    }
+
+    const passed = voteResult === 'PASSED' || voteResult === 'OVERRIDE_PASSED';
     // Mark bill voted if it came from the queue; also queue a post-vote stat roll for NPC bills
     try {
-      queries.markBillVoted(actionId, passed ? 'PASSED' : 'FAILED', { yea: yeas, nay: nays, abstain: abstains });
-      const bill = queries.getBill(actionId);
+      queries.markBillVoted(actionId, voteResult, { yea: yeas, nay: nays, abstain: abstains });
       if (bill && bill.is_npc) {
         // Roll trigger for NPC bill post-vote stat change
         const rng = makeRNG(randomBytes(4).readUInt32BE());
@@ -536,7 +590,22 @@ export function makeGameService(
     // Broadcast to the session room so players' vote cards are cleared.
     // The visibility setting is enforced on the client side for display only.
     io.to(`session:${sessionId}`).emit('action_vote_result', {
-      actionId, yeas, nays, abstains, passed, seqId: nextSeq(sessionId),
+      actionId,
+      yeas,
+      nays,
+      abstains,
+      passed,
+      voteResult,
+      yeaShare,
+      senatePasses,
+      regionsOK,
+      regionsMajority,
+      presidentSigns,
+      overridePassed,
+      isAmendment: !!bill?.is_amendment,
+      seatResults,
+      regionTally,
+      seqId: nextSeq(sessionId),
     });
 
     if (passed) _rollAndQueueStat(sessionId, pending.action);
@@ -572,6 +641,27 @@ export function makeGameService(
     });
   }
 
+  function clearSessionRuntime(sessionId: string): void {
+    seqCounters.delete(sessionId);
+    nationalStatuses.delete(sessionId);
+    visibilityMap.delete(sessionId);
+
+    for (const [actionId, pending] of pendingActionsMap.entries()) {
+      if (pending.sessionId === sessionId) pendingActionsMap.delete(actionId);
+    }
+    for (const [actionId, pending] of pendingVotesMap.entries()) {
+      if (pending.action.sessionId === sessionId) pendingVotesMap.delete(actionId);
+    }
+    for (const [actionId, pending] of pendingStatRollsMap.entries()) {
+      if (pending.action.sessionId === sessionId) pendingStatRollsMap.delete(actionId);
+    }
+  }
+
+  function setCachedNationalStatus(sessionId: string, status: NationalStatus | null): void {
+    if (status) nationalStatuses.set(sessionId, status);
+    else nationalStatuses.delete(sessionId);
+  }
+
   /** Returns all pending legislative votes for a session, for replay on rejoin. */
   function getActivePendingVotes(sessionId: string): Array<{
     actionId: string; playerName: string; party: string; content: string;
@@ -595,6 +685,7 @@ export function makeGameService(
     setNationalStatus, submitAction,
     acceptAction, dismissAction, recordActionVote, closeActionVote,
     confirmStatRoll, setVisibility, getActivePendingVotes, startBillVote,
+    clearSessionRuntime, setCachedNationalStatus,
   };
 }
 

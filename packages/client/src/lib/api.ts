@@ -24,7 +24,14 @@ async function request<T>(method: string, path: string, body?: unknown, extraHea
   if (!res.ok) {
     throw new Error(`${method} ${path} \u2192 ${res.status}`);
   }
-  return res.json() as Promise<T>;
+    let message = `${method} ${path} -> ${res.status}`;
+    try {
+      const payload = await res.json() as { error?: string };
+      if (payload?.error) message = payload.error;
+    } catch {
+      // Ignore unparseable error bodies and fall back to the HTTP status.
+    }
+    throw new Error(message);
 }
 
 export const api = {
@@ -32,6 +39,7 @@ export const api = {
   post:    <T>(path: string, body: unknown)                     => request<T>('POST', path, body),
   gmGet:   <T>(path: string, gmToken: string)                   => request<T>('GET',  path, undefined, { 'x-gm-token': gmToken }),
   gmPost:   <T>(path: string, gmToken: string, body?: unknown)   => request<T>('POST',   path, body,      { 'x-gm-token': gmToken }),
+  gmPut:    <T>(path: string, gmToken: string, body?: unknown)   => request<T>('PUT',    path, body,      { 'x-gm-token': gmToken }),
   gmDelete: <T>(path: string, gmToken: string)                   => request<T>('DELETE', path, undefined, { 'x-gm-token': gmToken }),
 };
 

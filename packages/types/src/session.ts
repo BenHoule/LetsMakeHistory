@@ -49,6 +49,16 @@ export interface BillState {
   playerVote:     VoteOption | null;
 }
 
+export interface BillVoteSeatResult {
+  id:         string;
+  region:     Region;
+  class:      1 | 2 | 3;
+  party:      Party;
+  playerName: string | null;
+  isPlayer:   boolean;
+  vote:       'YEA' | 'NAY' | 'ABSTAIN';
+}
+
 export interface PlayerState {
   id:          string;
   name:        string;
