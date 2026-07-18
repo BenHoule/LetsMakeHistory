@@ -10,5 +10,8 @@ allowBuilds:
   better-sqlite3: true
   esbuild: true
 
+overrides:
+  cookie: ^0.7.0
+
 allowedDeprecatedVersions:
   prebuild-install: '*'

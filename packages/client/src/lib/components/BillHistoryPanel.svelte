@@ -44,7 +44,7 @@
         <table style="width:100%;border-collapse:collapse;font-size:11px;">
           <thead>
             <tr style="color:#8a7a55;border-bottom:1px solid #3d3520;">
-              {#each ['Turn','Year','Title','Type','Proposer','Yea','Nay','Abstain','Result'] as h}
+              {#each ['Turn','Year','Title','Type','Proposer','Yea','Nay','Abstain','Result'] as h (h)}
                 <th style="text-align:left;padding:3px 5px;font-size:10px;text-transform:uppercase;white-space:nowrap;">{h}</th>
               {/each}
             </tr>

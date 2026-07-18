@@ -1,23 +1,217 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { get } from 'svelte/store';
+  import type { Socket } from 'socket.io-client';
   import { page } from '$app/state';
   import { socket } from '$lib/socket.js';
   import { api } from '$lib/api.js';
   import { runtimeConfig } from '$lib/runtime.js';
   import { sessionStore, phase, setSession, setPlayers, players } from '../../../stores/session.js';
   import { addPlayerAction, pendingActions, pendingStatRolls, visibilitySettings, setVisibility } from '../../../stores/gm.js';
-  import { pendingActionVotes, addActionVote, removeActionVote } from '../../../stores/votes.js';
-  import type { SessionStateResponse } from '@lmh/types';
-  import PhaseControls        from '$lib/components/PhaseControls.svelte';
+  import { pendingActionVotes } from '../../../stores/votes.js';
+  import type { ClientToServerEvents, Party, ServerToClientEvents, SessionStateResponse } from '@lmh/types';
   import NationalStatusEditor from '$lib/components/NationalStatusEditor.svelte';
   import ActionQueue          from '$lib/components/ActionQueue.svelte';
   import StatRollPreview      from '$lib/components/StatRollPreview.svelte';
   import StatChangePanel      from '$lib/components/StatChangePanel.svelte';
   import PlayerStatsTable     from '$lib/components/PlayerStatsTable.svelte';
-  import VisibilityToggles    from '$lib/components/VisibilityToggles.svelte';
   import LedgerImporter       from '$lib/components/LedgerImporter.svelte';
   import GameHistoryPanel     from '$lib/components/GameHistoryPanel.svelte';
+
+  type GmTurnContentType = 'EVENT' | 'COURT' | 'NPC_BILL' | 'AP_HEADLINE' | 'AMST_HEADLINE';
+
+  interface GmElectionData {
+    presidentName?: string;
+    presidentParty?: Party;
+    presidentElectedYear?: number;
+    presidentIsPlayer?: boolean;
+    nextSenateClass?: 1 | 2 | 3;
+    crossoverWeight?: number;
+    leftLeanBias?: number;
+    pendingNominees?: GmPendingNominees | null;
+    npcCandidates?: GmNpcCandidate[];
+  }
+
+  interface GmNomineeSlot {
+    party: Party;
+    name: string;
+  }
+
+  interface GmPendingNominees {
+    slots: GmNomineeSlot[];
+    year: number;
+  }
+
+  interface GmNpcCandidate {
+    year: number;
+    party: Party;
+    name: string;
+  }
+
+  interface GmSenatorRow {
+    id: string;
+    region: string;
+    class: 1 | 2 | 3;
+    party: Party;
+    is_player: boolean;
+    player_id: string | null;
+    player_name: string | null;
+  }
+
+  interface GmPartyApprovalRow {
+    party: Party;
+    approval: number;
+  }
+
+  interface GmRegionalModifierRow {
+    region: string;
+    party: Party;
+    modifier: number;
+  }
+
+  interface GmStatHistoryRow {
+    stat: string;
+    target: string;
+    delta: number;
+    reason: string;
+  }
+
+  interface GmBillQueueRow {
+    id: string;
+    title: string | null;
+    content: string;
+    proposing_party: Party;
+    is_amendment: boolean;
+    is_npc: boolean;
+    queued_at: string;
+    vote_result: 'PENDING';
+    source_player_id: string | null;
+    trigger_weight: number | null;
+    direction_bias: number | null;
+    stat_hint: string | null;
+    target_hint: string | null;
+    player_name: string | null;
+  }
+
+  interface GmBillHistoryRow {
+    id: string;
+    title: string | null;
+    content: string;
+    proposing_party: Party;
+    is_amendment: boolean;
+    is_npc: boolean;
+    vote_result: 'PASSED' | 'FAILED';
+    voted_at: string | null;
+    yea_count: number | null;
+    nay_count: number | null;
+    abstain_count: number | null;
+    turn_index: number | null;
+    year: number | null;
+    player_name: string | null;
+  }
+
+  interface GmTurnContentRow {
+    id: string;
+    type: GmTurnContentType;
+    content: string;
+    party: Party | null;
+    title: string | null;
+    trigger_weight: number | null;
+    direction_bias: number | null;
+    stat_hint: string | null;
+    target_hint: string | null;
+    created_at: string;
+  }
+
+  type GmTurnContentPayload = {
+    type: GmTurnContentType;
+    content: string;
+    party: Party | null;
+    title: string | null;
+    triggerWeight?: number;
+    directionBias?: number;
+    statHint?: string;
+    targetHint?: string;
+  };
+
+  interface GmVoteProgressEvent {
+    actionId: string;
+    votedCount: number;
+    totalPlayers: number;
+    allVoted: boolean;
+  }
+
+  interface GmPlayerActionVotedEvent {
+    actionId: string;
+    playerName: string;
+    vote: 'YEA' | 'NAY';
+  }
+
+  interface GmBillVoteSeatResult {
+    id: string;
+    region: string;
+    class: 1 | 2 | 3;
+    party: Party;
+    player_name: string | null;
+    is_player: boolean;
+    vote: 'PLAYER' | 'YEA' | 'NAY';
+  }
+
+  interface GmSenateResultRow {
+    region: string;
+    cls: 1 | 2 | 3;
+    winnerParty: Party;
+    top: Party;
+    second: Party;
+    prevParty: Party;
+    prevOccupant: string;
+    flipped: boolean;
+    note: string;
+  }
+
+  interface GmPresidentialResult {
+    nominees: GmNomineeSlot[];
+    electors: Record<string, number>;
+    breakdown: Array<{ region: string; aVal: number; bVal: number; winner: Party }>;
+    winnerSlot: GmNomineeSlot;
+    tie: boolean;
+    popularVote: { a: number; b: number } | null;
+    overridden: boolean;
+  }
+
+  interface GmSpecialElectionSuggestion {
+    region: string;
+    cls: 1 | 2 | 3;
+    party: Party;
+    ranked: Party[];
+  }
+
+  interface GmBillResult {
+    yea: number;
+    nay: number;
+    yeaShare: number;
+    senatePasses: boolean;
+    regionsOK: boolean;
+    regionsMaj: number;
+    presSigns: boolean;
+    passes: boolean;
+    seatResults: GmBillVoteSeatResult[];
+    regionTally: Record<string, { yea: number; nay: number }>;
+  }
+
+  interface GmServerToClientEvents extends ServerToClientEvents {
+    action_vote_progress: (e: GmVoteProgressEvent) => void;
+    bill_queued: () => void;
+    bill_queue_updated: () => void;
+    player_action_voted: (e: GmPlayerActionVotedEvent) => void;
+    player_removed: (e: { playerId: string }) => void;
+  }
+
+  interface GmClientToServerEvents extends ClientToServerEvents {
+    gm_start_bill_vote: (payload: { sessionId: string; billId: string }) => void;
+  }
+
+  const gmSocket = socket as Socket<GmServerToClientEvents, GmClientToServerEvents>;
 
   const sessionId = page.params.id!;
   let gmToken = $state('');
@@ -27,8 +221,8 @@
 
   let partyApprovals = $state<Record<string,number>>({});
   let regionalMods   = $state<Record<string,Record<string,number>>>({});
-  let senators       = $state<any[]>([]);
-  let statHistory    = $state<any[]>([]);
+  let senators       = $state<GmSenatorRow[]>([]);
+  let statHistory    = $state<GmStatHistoryRow[]>([]);
   let syncArmed      = $state(false);
 
   // Constants used throughout (declared here so election state can reference them)
@@ -45,7 +239,7 @@
 
   // ── Election timing helpers ────────────────────────────────────────────────
   const gmCurrentTurn   = $derived(($sessionStore.session?.turnIndex ?? 0) + 1);
-  const gmNextSenCls    = $derived(($sessionStore.session as any)?.next_senate_class ?? 1);
+  const gmNextSenCls    = $derived($sessionStore.session?.classCycle ?? 1);
 
   function gmTurnsUntilSenate(cls: number): number {
     const nextElecTurn = Math.ceil(gmCurrentTurn / 4) * 4;
@@ -69,15 +263,15 @@
   // (It depends on partyApprovals which is a $state; declared later but
   //  TypeScript needs lexical order. We declare a reactive stub here and
   //  reassign via $derived after partyApprovals is in scope.)
-  let ed          = $state<any>(null);   // getElectionData response
+  let ed          = $state<GmElectionData | null>(null);   // getElectionData response
   let presRunning = $state(true);
   let playerRunId = $state('');
-  let presResult  = $state<any>(null);
-  let senResult   = $state<any[]>([]);
-  let senClassPick = $state(1);
+  let presResult  = $state<GmPresidentialResult | null>(null);
+  let senResult   = $state<GmSenateResultRow[]>([]);
+  let senClassPick = $state<1 | 2 | 3>(1);
   let spRegion    = $state('Midwest');
-  let spClass     = $state(1);
-  let spResult    = $state<any>(null);
+  let spClass     = $state<1 | 2 | 3>(1);
+  let spResult    = $state<GmSpecialElectionSuggestion | null>(null);
   let newNpcYear  = $state(1904);
   let newNpcNames = $state<Record<string,string>>({ Progressive:'', Unionist:'', Whig:'', Conservative:'' });
   const sharePlayerBaseUrl = $derived($runtimeConfig.sharePlayerBaseUrl ?? page.url.origin);
@@ -90,7 +284,7 @@
   const presEligible = $derived(
     (() => {
       const top2 = [...PARTIES as unknown as string[]].sort((a,b)=>(partyApprovals[b]??0)-(partyApprovals[a]??0)).slice(0,2);
-      return $players.filter((p: any) => p.recognition >= 50 && top2.includes(p.party));
+      return $players.filter(p => p.recognition >= 50 && top2.includes(p.party));
     })()
   );
 
@@ -121,27 +315,28 @@
   }
 
   function resolveNominees() {
-    const nat = [...PARTIES as unknown as string[]].sort((a,b)=>(partyApprovals[b]??0)-(partyApprovals[a]??0));
+    const nat = [...PARTIES] as Party[];
+    nat.sort((a,b)=>(partyApprovals[b]??0)-(partyApprovals[a]??0));
     const yr  = 1901 + Math.floor(($sessionStore.session?.turnIndex ?? 0) / 2);
     const nextElecYear = yr + (4 - (yr - 1901) % 4) % 4;
-    let slots: Array<{party:string;name:string}>;
+    let slots: GmNomineeSlot[];
 
     if (presRunning) {
-      const presParty = ed?.presidentParty ?? 'Progressive';
-      const challenger = nat.find((p:string) => p !== presParty) ?? nat[1];
+      const presParty: Party = ed?.presidentParty ?? 'Progressive';
+      const challenger: Party = nat.find(p => p !== presParty) ?? nat[1];
       slots = [
         { party: presParty, name: ed?.presidentName ?? 'Theodore Roosevelt' },
         { party: challenger, name: '' },
       ];
     } else {
-      slots = nat.slice(0,2).map((p:string) => ({ party: p, name: '' }));
+      slots = nat.slice(0,2).map(p => ({ party: p, name: '' }));
     }
 
     // Apply player running override
     if (playerRunId) {
-      const pl = $players.find((p:any) => p.id === playerRunId);
+      const pl = $players.find(p => p.id === playerRunId);
       if (pl) {
-        const idx = slots.findIndex((s:any) => s.party === pl.party);
+        const idx = slots.findIndex(s => s.party === pl.party);
         if (idx >= 0) slots[idx] = { party: pl.party, name: pl.name };
       }
     }
@@ -149,7 +344,7 @@
     // Fill names from NPC candidate pool
     for (const slot of slots) {
       if (!slot.name) {
-        const cyc = ed?.npcCandidates?.filter((c:any) => c.year === nextElecYear && c.party === slot.party)[0];
+        const cyc = ed?.npcCandidates?.find(c => c.year === nextElecYear && c.party === slot.party);
         slot.name = cyc?.name || '(add NPC pool entry)';
       }
     }
@@ -159,7 +354,7 @@
   async function lockNominees() {
     const nom = resolveNominees();
     await api.gmPost(`/api/v1/gm/sessions/${sessionId}/pending-nominees`, gmToken, { nominees: nom });
-    ed = { ...ed, pendingNominees: nom };
+    if (ed) ed = { ...ed, pendingNominees: nom };
   }
 
   function runPresidentialElection() {
@@ -194,7 +389,7 @@
     await api.gmPost(`/api/v1/gm/sessions/${sessionId}/president`, gmToken,
       { name: w.name, party: w.party, year, isPlayer: false });
     await api.gmPost(`/api/v1/gm/sessions/${sessionId}/pending-nominees`, gmToken, { nominees: null });
-    ed = { ...ed, presidentName: w.name, presidentParty: w.party, presidentElectedYear: year, pendingNominees: null };
+    if (ed) ed = { ...ed, presidentName: w.name, presidentParty: w.party, presidentElectedYear: year, pendingNominees: null };
     presResult = null;
   }
 
@@ -205,14 +400,14 @@
         (regionApproval[region]?.[b] ?? 0) - (regionApproval[region]?.[a] ?? 0)
       );
       const top = sorted[0], second = sorted[1];
-      const prevSeat = senators.find((s:any) => s.region === region && s.class === cls);
+      const prevSeat = senators.find(s => s.region === region && s.class === cls);
       const prevParty = prevSeat?.party ?? top;
       const prevOccupant = prevSeat?.player_name ?? 'NPC';
 
       // Underdog exception
       let winnerParty = top;
       if (prevSeat?.is_player) {
-        const pl = $players.find((p:any) => p.senator_id === prevSeat.id || p.name === prevOccupant);
+        const pl = $players.find(p => p.id === prevSeat.player_id || p.name === prevOccupant);
         if (pl && prevParty === second) {
           const gap = (regionApproval[region]?.[top] ?? 0) - (regionApproval[region]?.[second] ?? 0);
           const buffer = 5 + (pl.approval - 50);
@@ -229,17 +424,17 @@
   }
 
   async function syncNpcSeats() {
-    const resp = await api.gmPost<{senators:any[]}>(`/api/v1/gm/sessions/${sessionId}/sync-npc-seats`, gmToken, {});
+    const resp = await api.gmPost<{ senators: GmSenatorRow[] }>(`/api/v1/gm/sessions/${sessionId}/sync-npc-seats`, gmToken, {});
     if (resp?.senators) senators = resp.senators;
   }
 
   async function applySenateResults() {
     if (!senResult.length) return;
-    const results = senResult.map((r:any) => ({ region: r.region, cls: r.cls, party: r.winnerParty }));
-    const resp = await api.gmPost<{senators:any[]}>(`/api/v1/gm/sessions/${sessionId}/apply-senate-results`, gmToken, { results });
+    const results = senResult.map(r => ({ region: r.region, cls: r.cls, party: r.winnerParty }));
+    const resp = await api.gmPost<{ senators: GmSenatorRow[] }>(`/api/v1/gm/sessions/${sessionId}/apply-senate-results`, gmToken, { results });
     if (resp?.senators) senators = resp.senators;
     senClassPick = ((senClassPick % 3) + 1);
-    ed = { ...ed, nextSenateClass: senClassPick };
+    if (ed) ed = { ...ed, nextSenateClass: senClassPick as 1 | 2 | 3 };
     senResult = [];
   }
 
@@ -254,7 +449,7 @@
     if (!spResult) return;
     await api.gmPost(`/api/v1/gm/sessions/${sessionId}/apply-senate-results`, gmToken,
       { results: [{ region: spResult.region, cls: spResult.cls, party: spResult.party }] });
-    const updSen = await api.get<any[]>(`/api/v1/sessions/${sessionId}/senators`);
+    const updSen = await api.get<GmSenatorRow[]>(`/api/v1/sessions/${sessionId}/senators`);
     senators = updSen;
     spResult = null;
   }
@@ -265,8 +460,8 @@
       await api.gmPost(`/api/v1/gm/sessions/${sessionId}/npc-candidates`, gmToken,
         { year: newNpcYear, party, name: name.trim() });
     }
-    const npc = await api.get<any[]>(`/api/v1/sessions/${sessionId}/election-data`).then((d:any) => d.npcCandidates ?? []);
-    ed = { ...ed, npcCandidates: npc };
+    const npc = await api.get<GmElectionData>(`/api/v1/sessions/${sessionId}/election-data`).then(d => d.npcCandidates ?? []);
+    if (ed) ed = { ...ed, npcCandidates: npc };
     newNpcNames = { Progressive:'', Unionist:'', Whig:'', Conservative:'' };
   }
 
@@ -274,27 +469,27 @@
     await fetch(`${import.meta.env.PUBLIC_API_URL}/api/v1/gm/sessions/${sessionId}/npc-candidates/${year}/${party}`, {
       method: 'DELETE', headers: { 'x-gm-token': gmToken },
     });
-    ed = { ...ed, npcCandidates: (ed?.npcCandidates ?? []).filter((c:any) => !(c.year===year && c.party===party)) };
+    if (ed) ed = { ...ed, npcCandidates: (ed.npcCandidates ?? []).filter(c => !(c.year === year && c.party === party)) };
   }
   let billLean       = $state<Record<string,number>>({});
   let billRizzBoost  = $state<Record<string,boolean>>({});
-  let billProposer   = $state('Progressive');
+  let billProposer   = $state<Party>('Progressive');
   let billTitle      = $state('');
   let billDesc       = $state('');
   let billType       = $state<'bill'|'amendment'>('bill');
-  let billResult     = $state<any>(null);
-  let billQueue      = $state<any[]>([]);
-  let billHistory    = $state<any[]>([]);
+  let billResult     = $state<GmBillResult | null>(null);
+  let billQueue      = $state<GmBillQueueRow[]>([]);
+  let billHistory    = $state<GmBillHistoryRow[]>([]);
   let loading        = $state(true);
 
   // Per-vote lean overrides keyed by actionId → { party → { leanIdx, rizzBoosted } }
   let voteLeans = $state<Record<string, Record<string, {leanIdx:number;rizzBoosted:boolean}>>>({});
 
   // Turn content queue (events / SC / NPC bills for next turn)
-  let turnContent    = $state<{id:string;type:string;content:string;party:string|null;title:string|null;trigger_weight:number|null;direction_bias:number|null;stat_hint:string|null;target_hint:string|null}[]>([]);
+  let turnContent    = $state<GmTurnContentRow[]>([]);
   let tcType         = $state<'EVENT'|'COURT'|'NPC_BILL'|'AP_HEADLINE'|'AMST_HEADLINE'>('EVENT');
   let tcContent      = $state('');
-  let tcParty        = $state('Progressive');
+  let tcParty        = $state<Party>('Progressive');
   let tcTitle        = $state('');  // for NPC_BILL
   let tcShowWeights  = $state(false);
   let tcTriggerWt    = $state<number|null>(null);  // null = use default
@@ -330,8 +525,6 @@
   let packetOpen  = $state(false);
   let packetText  = $state('');
   let resetArmed  = $state(false);
-  let importEl: HTMLInputElement | undefined = $state(undefined);
-
   function buildTurnPacket() {
     const turn = (get(sessionStore).session?.turnIndex ?? 0) + 1;
     const year = get(sessionStore).session?.year ?? 1901;
@@ -386,14 +579,14 @@
     try {
       const [st,pa,rm,sen,hist,edRaw] = await Promise.all([
         api.get<SessionStateResponse>(`/api/v1/sessions/${sessionId}`),
-        api.get<any[]>(`/api/v1/sessions/${sessionId}/party-approvals`),
-        api.get<any[]>(`/api/v1/sessions/${sessionId}/regional-modifiers`),
-        api.get<any[]>(`/api/v1/sessions/${sessionId}/senators`),
-        api.get<any[]>(`/api/v1/sessions/${sessionId}/stat-history`),
-        api.get<any>(`/api/v1/sessions/${sessionId}/election-data`),
+        api.get<GmPartyApprovalRow[]>(`/api/v1/sessions/${sessionId}/party-approvals`),
+        api.get<GmRegionalModifierRow[]>(`/api/v1/sessions/${sessionId}/regional-modifiers`),
+        api.get<GmSenatorRow[]>(`/api/v1/sessions/${sessionId}/senators`),
+        api.get<GmStatHistoryRow[]>(`/api/v1/sessions/${sessionId}/stat-history`),
+        api.get<GmElectionData>(`/api/v1/sessions/${sessionId}/election-data`),
       ]);
       setSession(st.session); setPlayers(st.players);
-      partyApprovals = Object.fromEntries(pa.map((r:any)=>[r.party,r.approval]));
+      partyApprovals = Object.fromEntries(pa.map(r => [r.party, r.approval])) as Record<string, number>;
       const rm2: Record<string,Record<string,number>> = {};
       for (const {region,party,modifier} of rm) { (rm2[region]??={})[party]=modifier; }
       regionalMods = rm2;
@@ -410,24 +603,24 @@
     loadBillQueue();
     loadBillHistory();
     loadTurnContent();
-    socket.on('stat_delta' as any, () => {
-      api.get<any[]>(`/api/v1/sessions/${sessionId}/party-approvals`).then(pa=>{ partyApprovals=Object.fromEntries(pa.map((r:any)=>[r.party,r.approval])); });
-      api.get<any[]>(`/api/v1/sessions/${sessionId}/stat-history`).then(h=>{ statHistory=h; });
+    gmSocket.on('stat_delta', () => {
+      api.get<GmPartyApprovalRow[]>(`/api/v1/sessions/${sessionId}/party-approvals`).then(pa => { partyApprovals = Object.fromEntries(pa.map(r => [r.party, r.approval])) as Record<string, number>; });
+      api.get<GmStatHistoryRow[]>(`/api/v1/sessions/${sessionId}/stat-history`).then(h => { statHistory = h; });
     });
     if (gmToken) {
-      const saved = await api.gmGet<any[]>(`/api/v1/gm/sessions/${sessionId}/actions`,gmToken).catch(()=>[]);
-      for (const a of saved) addPlayerAction(a as any);
+      const saved = await api.gmGet<Array<Parameters<typeof addPlayerAction>[0]>>(`/api/v1/gm/sessions/${sessionId}/actions`, gmToken).catch(() => []);
+      for (const a of saved) addPlayerAction(a);
     }
-    socket.emit('join_session',{sessionId,playerId:'gm',gmToken});    // Real-time vote progress from server
-    (socket as any).on('action_vote_progress', (e: any) => {
+    gmSocket.emit('join_session', { sessionId, playerId: 'gm', gmToken });
+    gmSocket.on('action_vote_progress', (e: GmVoteProgressEvent) => {
       voteProgress = { ...voteProgress, [e.actionId]: e };
     });
-    (socket as any).on('bill_queued', () => { loadBillQueue(); });
-    (socket as any).on('bill_queue_updated', () => { loadBillQueue(); });
+    gmSocket.on('bill_queued', () => { loadBillQueue(); });
+    gmSocket.on('bill_queue_updated', () => { loadBillQueue(); });
     // Refresh bill history after each vote closes
-    socket.on('action_vote_result' as any, () => { loadBillHistory(); loadBillQueue(); });
+    gmSocket.on('action_vote_result', () => { loadBillHistory(); loadBillQueue(); });
     // Initialise per-vote lean table when a vote opens
-    (socket as any).on('legislative_vote_requested', (e: any) => {
+    gmSocket.on('legislative_vote_requested', e => {
       getVoteLean(e.actionId, e.party);
     });
   });
@@ -451,11 +644,11 @@
   });
 
   async function loadBillQueue() {
-    billQueue = await api.get<any[]>(`/api/v1/sessions/${sessionId}/bill-queue`).catch(() => []);
+    billQueue = await api.get<GmBillQueueRow[]>(`/api/v1/sessions/${sessionId}/bill-queue`).catch(() => []);
   }
 
   async function loadBillHistory() {
-    billHistory = await api.get<any[]>(`/api/v1/sessions/${sessionId}/bill-history`).catch(() => []);
+    billHistory = await api.get<GmBillHistoryRow[]>(`/api/v1/sessions/${sessionId}/bill-history`).catch(() => []);
   }
 
   async function addBillToQueue() {
@@ -490,13 +683,14 @@
   }
 
   function closeVoteWithLeans(actionId: string) {
-    socket.emit('gm_close_action_vote', { sessionId, actionId, leanOverrides: voteLeans[actionId] } as any);
-    const { [actionId]: _, ...rest } = voteLeans;
+    gmSocket.emit('gm_close_action_vote', { sessionId, actionId, leanOverrides: voteLeans[actionId] });
+    const rest = { ...voteLeans };
+    delete rest[actionId];
     voteLeans = rest;
   }
 
   async function loadTurnContent() {
-    turnContent = await api.get<any[]>(`/api/v1/sessions/${sessionId}/turn-content`).catch(() => []);
+    turnContent = await api.get<GmTurnContentRow[]>(`/api/v1/sessions/${sessionId}/turn-content`).catch(() => []);
   }
 
   async function addTurnContentItem() {
@@ -507,7 +701,7 @@
     if (tcType==='AP_HEADLINE'   && tcApCount>=1)   return;
     if (tcType==='AMST_HEADLINE' && tcAmStCount>=1) return;
     if (tcType==='NPC_BILL' && !tcTitle.trim()) return;
-    const payload: any = {
+    const payload: GmTurnContentPayload = {
       type: tcType,
       content: tcContent.trim(),
       party: tcType==='NPC_BILL' ? tcParty : null,
@@ -532,20 +726,20 @@
     billQueue = billQueue.filter(b => b.id !== billId);
   }
 
-  function startVoteOnBill(bill: any) {
+  function startVoteOnBill(bill: GmBillQueueRow) {
     // Pre-fill the lean table from the bill's proposing party
     billProposer = bill.proposing_party;
     billTitle    = bill.title || bill.content;
     billType     = bill.is_amendment ? 'amendment' : 'bill';
     // Start the vote via socket
-    socket.emit('gm_start_bill_vote' as any, { sessionId, billId: bill.id });
+    gmSocket.emit('gm_start_bill_vote', { sessionId, billId: bill.id });
     // Remove from local queue display
     billQueue = billQueue.filter(b => b.id !== bill.id);
   }
 
   function rollBillVotes() {
     let yea=0, nay=0;
-    const seatResults: any[] = [];
+    const seatResults: GmBillVoteSeatResult[] = [];
     const regionTally: Record<string,{yea:number;nay:number}> = {};
     for (const s of senators) {
       if (s.is_player) { seatResults.push({...s,vote:'PLAYER'}); continue; }
@@ -591,7 +785,7 @@
     <span>Year <strong>{$sessionStore.session?.year??1901}</strong></span>
     <span style="font-size:11px; text-transform:uppercase; letter-spacing:0.5px; color:#7a7362;">Phase</span>
     <strong style="color:#7a2222;">{$phase}</strong>
-    {#each nationalStandings as p}
+    {#each nationalStandings as p (p)}
       <span style="color:{pc(p)}; font-weight:600;">{p} {(partyApprovals[p]??0).toFixed(1)}</span>
     {/each}
     <button
@@ -628,7 +822,7 @@
     </span>
   {/if}
   <span style="font-size:12px;color:#7a7362;margin-left:4px;">Visibility:</span>
-  {#each [['ownRolls','Own rolls'],['allRolls','All rolls'],['npcVoteRolls','NPC votes']] as [field, label]}
+  {#each [['ownRolls','Own rolls'],['allRolls','All rolls'],['npcVoteRolls','NPC votes']] as [field, label] (field)}
     <label style="font-size:12px;cursor:pointer;display:flex;align-items:center;gap:3px;">
       <input type="checkbox" checked={$visibilitySettings[field as keyof typeof $visibilitySettings]}
         onchange={() => {
@@ -663,7 +857,7 @@
 {/if}
 
 <nav style="display:flex; gap:2px; padding:0 20px; background:#f1ecdf; border-bottom:2px solid #232019; flex-wrap:wrap;">
-  {#each (['dashboard','actions','parties','roster','bills','elections','ledger'] as Tab[]) as tab}
+  {#each (['dashboard','actions','parties','roster','bills','elections','ledger'] as Tab[]) as tab (tab)}
     <button onclick={() => activeTab=tab}
       style="padding:10px 14px; background:none; border:none; cursor:pointer; font-size:13px; font-weight:600;
              color:{activeTab===tab?'#232019':'#7a7362'}; border-bottom:{activeTab===tab?'3px solid #7a2222':'3px solid transparent'};
@@ -683,18 +877,18 @@
     <div style="background:#f1ecdf;border:1px solid #d8d0b8;border-radius:6px;padding:14px;">
       <h2 style="font-family:Georgia,serif;font-size:15px;margin:0 0 10px;border-bottom:1px solid #b8ae8e;padding-bottom:6px;">National Party Approval</h2>
       <table style="width:100%;border-collapse:collapse;font-size:13px;">
-        <thead><tr>{#each PARTIES as p}<th style="text-align:left;padding:4px 6px;font-size:11px;color:{pc(p)};text-transform:uppercase;font-weight:700;">{p}</th>{/each}</tr></thead>
-        <tbody><tr>{#each PARTIES as p}<td style="padding:4px 6px;font-weight:700;font-size:18px;">{(partyApprovals[p]??0).toFixed(1)}</td>{/each}</tr></tbody>
+        <thead><tr>{#each PARTIES as p (p)}<th style="text-align:left;padding:4px 6px;font-size:11px;color:{pc(p)};text-transform:uppercase;font-weight:700;">{p}</th>{/each}</tr></thead>
+        <tbody><tr>{#each PARTIES as p (p)}<td style="padding:4px 6px;font-weight:700;font-size:18px;">{(partyApprovals[p]??0).toFixed(1)}</td>{/each}</tr></tbody>
       </table>
     </div>
     <div style="background:#f1ecdf;border:1px solid #d8d0b8;border-radius:6px;padding:14px;">
       <h2 style="font-family:Georgia,serif;font-size:15px;margin:0 0 10px;border-bottom:1px solid #b8ae8e;padding-bottom:6px;">Region Standings</h2>
       <table style="width:100%;border-collapse:collapse;font-size:11px;">
-        <thead><tr><th style="text-align:left;padding:3px 4px;font-size:10px;color:#7a7362;background:#e8e1cc;">Region</th>{#each [1,2,3,4] as n}<th style="padding:3px 4px;font-size:10px;color:#7a7362;background:#e8e1cc;">{n}</th>{/each}</tr></thead>
+        <thead><tr><th style="text-align:left;padding:3px 4px;font-size:10px;color:#7a7362;background:#e8e1cc;">Region</th>{#each [1,2,3,4] as n (n)}<th style="padding:3px 4px;font-size:10px;color:#7a7362;background:#e8e1cc;">{n}</th>{/each}</tr></thead>
         <tbody>
-        {#each REGIONS as r}
+        {#each REGIONS as r (r)}
           {@const abbrev = (p: string) => p === 'Progressive' ? 'Prog' : p === 'Unionist' ? 'Union' : p === 'Conservative' ? 'Cons' : p}
-          <tr><td style="padding:3px 4px;font-weight:600;white-space:nowrap;">{r}</td>{#each regionStandings[r] as p}<td style="padding:3px 4px;color:{pc(p)};font-weight:600;white-space:nowrap;">{abbrev(p)} <span style="color:#888;font-weight:400;">({(regionApproval[r]?.[p]??0).toFixed(1)})</span></td>{/each}</tr>
+          <tr><td style="padding:3px 4px;font-weight:600;white-space:nowrap;">{r}</td>{#each regionStandings[r] as p (p)}<td style="padding:3px 4px;color:{pc(p)};font-weight:600;white-space:nowrap;">{abbrev(p)} <span style="color:#888;font-weight:400;">({(regionApproval[r]?.[p]??0).toFixed(1)})</span></td>{/each}</tr>
         {/each}
         </tbody>
       </table>
@@ -709,9 +903,9 @@
     {#if statHistory.length===0}<p style="color:#7a7362;font-style:italic;font-size:13px;">None yet.</p>
     {:else}
       <table style="width:100%;border-collapse:collapse;font-size:12px;">
-        <thead><tr>{#each ['Stat','Target','Delta','Reason'] as h}<th style="text-align:left;padding:4px 6px;font-size:11px;color:#7a7362;text-transform:uppercase;background:#e8e1cc;">{h}</th>{/each}</tr></thead>
+        <thead><tr>{#each ['Stat','Target','Delta','Reason'] as h (h)}<th style="text-align:left;padding:4px 6px;font-size:11px;color:#7a7362;text-transform:uppercase;background:#e8e1cc;">{h}</th>{/each}</tr></thead>
         <tbody>
-        {#each statHistory.slice(0,20) as h}
+        {#each statHistory.slice(0,20) as h (h.stat)}
           <tr><td style="padding:4px 6px;">{h.stat}</td><td style="padding:4px 6px;">{h.target}</td><td style="padding:4px 6px;font-weight:700;color:{h.delta>0?'#3b6d11':'#a32d2d'};">{h.delta>0?'+':''}{h.delta}</td><td style="padding:4px 6px;color:#555;">{h.reason}</td></tr>
         {/each}
         </tbody>
@@ -740,8 +934,8 @@
     <div style="display:grid;gap:8px;margin-bottom:10px;">
       <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
         <div>
-          <label style="font-size:11px;color:#7a7362;">Type</label>
-          <select bind:value={tcType} style="font-size:12px;padding:4px 6px;border:1px solid #b8ae8e;border-radius:4px;background:#faf7f0;display:block;margin-top:2px;">
+          <label for="turn-content-type" style="font-size:11px;color:#7a7362;">Type</label>
+          <select id="turn-content-type" bind:value={tcType} style="font-size:12px;padding:4px 6px;border:1px solid #b8ae8e;border-radius:4px;background:#faf7f0;display:block;margin-top:2px;">
             <option value="EVENT">Event {tcEventCount}/3</option>
             <option value="COURT">SC Decision {tcCourtCount}/1</option>
             <option value="NPC_BILL">NPC Bill {tcNpcBillCount}/3</option>
@@ -751,22 +945,22 @@
         </div>
         {#if tcType === 'NPC_BILL'}
           <div>
-            <label style="font-size:11px;color:#7a7362;">Party</label>
-            <select bind:value={tcParty} style="font-size:12px;padding:4px 6px;border:1px solid #b8ae8e;border-radius:4px;background:#faf7f0;display:block;margin-top:2px;">
-              {#each PARTIES as p}<option value={p}>{p}</option>{/each}
+            <label for="turn-content-party" style="font-size:11px;color:#7a7362;">Party</label>
+            <select id="turn-content-party" bind:value={tcParty} style="font-size:12px;padding:4px 6px;border:1px solid #b8ae8e;border-radius:4px;background:#faf7f0;display:block;margin-top:2px;">
+              {#each PARTIES as p (p)}<option value={p}>{p}</option>{/each}
             </select>
           </div>
           <div style="min-width:150px;">
-            <label style="font-size:11px;color:#7a7362;">Bill Title <span style="color:#7a2222;">*</span></label>
-            <input bind:value={tcTitle} placeholder="Short title…"
+            <label for="turn-content-title" style="font-size:11px;color:#7a7362;">Bill Title <span style="color:#7a2222;">*</span></label>
+            <input id="turn-content-title" bind:value={tcTitle} placeholder="Short title…"
               style="width:100%;font-size:12px;padding:4px 6px;border:1px solid #b8ae8e;border-radius:4px;background:#faf7f0;display:block;margin-top:2px;" />
           </div>
         {/if}
         <div style="flex:1;min-width:200px;">
-          <label style="font-size:11px;color:#7a7362;">
+          <label for="turn-content-body" style="font-size:11px;color:#7a7362;">
             {tcType==='AP_HEADLINE'?'AP Headline text':tcType==='AMST_HEADLINE'?'American Standard headline text':tcType==='NPC_BILL'?'Bill description':'Narrative content'}
           </label>
-          <input bind:value={tcContent}
+          <input id="turn-content-body" bind:value={tcContent}
             placeholder={tcType==='NPC_BILL'?'Brief description of the bill…':'Narrative content…'}
             style="width:100%;font-size:12px;padding:4px 6px;border:1px solid #b8ae8e;border-radius:4px;background:#faf7f0;display:block;margin-top:2px;" />
         </div>
@@ -787,17 +981,18 @@
           {#if tcShowWeights}
             <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:6px;padding:8px;background:#e8e1cc;border-radius:4px;">
               <div>
-                <label style="font-size:10px;color:#7a7362;">Trigger % override</label>
+                <label for="turn-content-trigger" style="font-size:10px;color:#7a7362;">Trigger % override</label>
                 <input type="number" min="0" max="100" step="5"
+                  id="turn-content-trigger"
                   placeholder={tcType==='COURT'?'default 20%':'default 30%'}
                   value={tcTriggerWt !== null ? Math.round(tcTriggerWt*100) : ''}
                   onchange={(e)=>{ const v=parseFloat((e.target as HTMLInputElement).value); tcTriggerWt=isNaN(v)?null:v/100; }}
                   style="width:100%;font-size:11px;padding:3px 5px;border:1px solid #b8ae8e;border-radius:3px;background:#faf7f0;margin-top:2px;" />
               </div>
               <div>
-                <label style="font-size:10px;color:#7a7362;">Direction (positive chance)</label>
+                <label for="turn-content-direction" style="font-size:10px;color:#7a7362;">Direction (positive chance)</label>
                 <div style="display:flex;align-items:center;gap:6px;margin-top:4px;">
-                  <input type="range" min="0" max="1" step="0.05" bind:value={tcDirBias}
+                  <input id="turn-content-direction" type="range" min="0" max="1" step="0.05" bind:value={tcDirBias}
                     style="flex:1;" />
                   <span style="font-size:11px;color:#232019;font-weight:600;min-width:36px;text-align:right;">{Math.round(tcDirBias*100)}%</span>
                 </div>
@@ -810,15 +1005,15 @@
                 {/if}
               </div>
               <div>
-                <label style="font-size:10px;color:#7a7362;">Stat hint</label>
-                <select bind:value={tcStatHint} style="width:100%;font-size:11px;padding:3px 5px;border:1px solid #b8ae8e;border-radius:3px;background:#faf7f0;margin-top:2px;">
+                <label for="turn-content-stathint" style="font-size:10px;color:#7a7362;">Stat hint</label>
+                <select id="turn-content-stathint" bind:value={tcStatHint} style="width:100%;font-size:11px;padding:3px 5px;border:1px solid #b8ae8e;border-radius:3px;background:#faf7f0;margin-top:2px;">
                   <option value="">No hint</option>
-                  {#each STAT_NAMES as s}<option value={s}>{s}</option>{/each}
+                  {#each STAT_NAMES as s (s)}<option value={s}>{s}</option>{/each}
                 </select>
               </div>
               <div>
-                <label style="font-size:10px;color:#7a7362;">Target hint</label>
-                <input bind:value={tcTargetHint} placeholder="Player / Party / Region…"
+                <label for="turn-content-targethint" style="font-size:10px;color:#7a7362;">Target hint</label>
+                <input id="turn-content-targethint" bind:value={tcTargetHint} placeholder="Player / Party / Region…"
                   style="width:100%;font-size:11px;padding:3px 5px;border:1px solid #b8ae8e;border-radius:3px;background:#faf7f0;margin-top:2px;" />
               </div>
             </div>
@@ -838,7 +1033,7 @@
           <th style="padding:3px 5px;background:#e8e1cc;"></th>
         </tr></thead>
         <tbody>
-        {#each turnContent as tc}
+        {#each turnContent as tc (tc.id)}
           <tr style="border-bottom:1px solid #e0d8c0;">
             <td style="padding:3px 5px;font-weight:600;color:{tc.type==='EVENT'?'#1f3a5f':tc.type==='COURT'?'#5a3a7a':tc.type==='NPC_BILL'?'#854f0b':'#3b6d11'};">
               {tc.type==='AP_HEADLINE'?'AP':tc.type==='AMST_HEADLINE'?'AmStd':tc.type}
@@ -874,7 +1069,7 @@
       <table style="width:100%;border-collapse:collapse;font-size:13px;">
         <thead><tr><th style="text-align:left;padding:4px 6px;font-size:11px;color:#7a7362;background:#e8e1cc;">Party</th><th style="text-align:left;padding:4px 6px;font-size:11px;color:#7a7362;background:#e8e1cc;">Approval (0–100)</th></tr></thead>
         <tbody>
-        {#each PARTIES as p}
+        {#each PARTIES as p (p)}
           <tr><td style="padding:4px 6px;font-weight:700;color:{pc(p)};">{p}</td><td style="padding:4px 6px;"><input type="number" step="0.5" min="0" max="100" value={(partyApprovals[p]??0).toFixed(1)} onchange={(e)=>savePartyApproval(p,(e.target as HTMLInputElement).value)} style="width:80px;font-size:13px;padding:3px 6px;border:1px solid #b8ae8e;border-radius:4px;background:#faf7f0;" /></td></tr>
         {/each}
         </tbody>
@@ -883,18 +1078,18 @@
     <div style="background:#f1ecdf;border:1px solid #d8d0b8;border-radius:6px;padding:14px;">
       <h2 style="font-family:Georgia,serif;font-size:15px;margin:0 0 10px;border-bottom:1px solid #b8ae8e;padding-bottom:6px;">Weighted Regional Approval</h2>
       <table style="width:100%;border-collapse:collapse;font-size:12px;">
-        <thead><tr><th style="padding:3px 5px;background:#e8e1cc;font-size:11px;text-align:left;">Region</th>{#each PARTIES as p}<th style="padding:3px 5px;background:#e8e1cc;font-size:11px;">{p}</th>{/each}</tr></thead>
-        <tbody>{#each REGIONS as r}<tr><td style="padding:3px 5px;font-weight:600;">{r}</td>{#each PARTIES as p}<td style="padding:3px 5px;text-align:center;">{(regionApproval[r]?.[p]??0).toFixed(2)}</td>{/each}</tr>{/each}</tbody>
+        <thead><tr><th style="padding:3px 5px;background:#e8e1cc;font-size:11px;text-align:left;">Region</th>{#each PARTIES as p (p)}<th style="padding:3px 5px;background:#e8e1cc;font-size:11px;">{p}</th>{/each}</tr></thead>
+        <tbody>{#each REGIONS as r (r)}<tr><td style="padding:3px 5px;font-weight:600;">{r}</td>{#each PARTIES as p (p)}<td style="padding:3px 5px;text-align:center;">{(regionApproval[r]?.[p]??0).toFixed(2)}</td>{/each}</tr>{/each}</tbody>
       </table>
     </div>
   </div>
   <div style="background:#f1ecdf;border:1px solid #d8d0b8;border-radius:6px;padding:14px;">
     <h2 style="font-family:Georgia,serif;font-size:15px;margin:0 0 10px;border-bottom:1px solid #b8ae8e;padding-bottom:6px;">Regional Modifiers</h2>
     <table style="width:100%;border-collapse:collapse;font-size:12px;">
-      <thead><tr><th style="text-align:left;padding:4px 6px;background:#e8e1cc;font-size:11px;">Region</th>{#each PARTIES as p}<th style="padding:4px 6px;background:#e8e1cc;font-size:11px;">{p}</th>{/each}</tr></thead>
+      <thead><tr><th style="text-align:left;padding:4px 6px;background:#e8e1cc;font-size:11px;">Region</th>{#each PARTIES as p (p)}<th style="padding:4px 6px;background:#e8e1cc;font-size:11px;">{p}</th>{/each}</tr></thead>
       <tbody>
-      {#each REGIONS as r}
-        <tr><td style="padding:4px 6px;font-weight:600;">{r}</td>{#each PARTIES as p}<td style="padding:4px 6px;text-align:center;"><input type="number" step="0.05" min="0" value={(regionalMods[r]?.[p]??1).toFixed(2)} onchange={(e)=>saveRegionalModifier(r,p,(e.target as HTMLInputElement).value)} style="width:65px;font-size:12px;padding:2px 4px;border:1px solid #b8ae8e;border-radius:4px;background:#faf7f0;text-align:center;" /></td>{/each}</tr>
+      {#each REGIONS as r (r)}
+        <tr><td style="padding:4px 6px;font-weight:600;">{r}</td>{#each PARTIES as p (p)}<td style="padding:4px 6px;text-align:center;"><input type="number" step="0.05" min="0" value={(regionalMods[r]?.[p]??1).toFixed(2)} onchange={(e)=>saveRegionalModifier(r,p,(e.target as HTMLInputElement).value)} style="width:65px;font-size:12px;padding:2px 4px;border:1px solid #b8ae8e;border-radius:4px;background:#faf7f0;text-align:center;" /></td>{/each}</tr>
       {/each}
       </tbody>
     </table>
@@ -928,9 +1123,9 @@
       {/if}
     </div>
     <table style="width:100%;border-collapse:collapse;font-size:13px;">
-      <thead><tr>{#each ['Region','Class','Party','Occupant',''] as h}<th style="text-align:left;padding:4px 8px;font-size:11px;text-transform:uppercase;color:#7a7362;background:#e8e1cc;">{h}</th>{/each}</tr></thead>
+      <thead><tr>{#each ['Region','Class','Party','Occupant',''] as h (h)}<th style="text-align:left;padding:4px 8px;font-size:11px;text-transform:uppercase;color:#7a7362;background:#e8e1cc;">{h}</th>{/each}</tr></thead>
       <tbody>
-      {#each senators as s}
+      {#each senators as s (s.id)}
         <tr>
           <td style="padding:4px 8px;">{s.region}</td>
           <td style="padding:4px 8px;text-align:center;">{s.class}</td>
@@ -942,7 +1137,7 @@
                 onclick={async () => {
                   if (!confirm(`Remove ${s.player_name} from the game? Their seat returns to NPC.`)) return;
                   await api.gmDelete(`/api/v1/gm/sessions/${sessionId}/players/${s.player_id}`, gmToken);
-                  senators = await api.get<any[]>(`/api/v1/sessions/${sessionId}/senators`);
+                  senators = await api.get<GmSenatorRow[]>(`/api/v1/sessions/${sessionId}/senators`);
                 }}
                 style="font-size:11px;background:#7a2222;color:#fff;border:none;border-radius:3px;padding:2px 8px;cursor:pointer;font-family:inherit;">
                 Remove
@@ -958,7 +1153,7 @@
 {:else if activeTab==='bills'}
 
   <!-- ── Open Votes (each has its own lean table) ── -->
-  {#each $pendingActionVotes as v}
+  {#each $pendingActionVotes as v (v.actionId)}
     {@const prog = voteProgress[v.actionId]}
     {@const vl = getVoteLean(v.actionId, v.party)}
     <div style="border:2px solid #854f0b;border-radius:6px;padding:14px;background:#fffbf2;margin-bottom:14px;font-family:Georgia,serif;">
@@ -974,7 +1169,7 @@
           <!-- live player votes -->
           {#if Object.keys(v.playerVotes).length > 0}
             <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:4px;">
-              {#each Object.entries(v.playerVotes) as [pname, pv]}
+              {#each Object.entries(v.playerVotes) as [pname, pv] (pname)}
                 <span style="font-size:10px;background:{pv==='YEA'?'#1e3d1a':'#3d1a1a'};color:{pv==='YEA'?'#7de87d':'#e87d7d'};padding:1px 6px;border-radius:3px;">{pname}: {pv}</span>
               {/each}
             </div>
@@ -994,7 +1189,7 @@
           <th style="padding:3px 5px;background:#efe5cc;font-size:10px;">Rizz</th>
         </tr></thead>
         <tbody>
-        {#each PARTIES as p}
+        {#each PARTIES as p (p)}
           {@const def = defaultLeanIdx(p, v.party)}
           {@const cur = vl[p] ?? {leanIdx: def, rizzBoosted: false}}
           <tr>
@@ -1003,7 +1198,7 @@
             <td style="padding:3px 5px;">
               <select value={cur.leanIdx} onchange={(e)=>setVoteLean(v.actionId,p,Number((e.target as HTMLSelectElement).value))}
                 style="font-size:10px;padding:2px 4px;border:1px solid #b8ae8e;border-radius:3px;background:#faf7f0;">
-                {#each LEAN_CATS as cat,i}<option value={i}>{cat.label} ({(cat.prob*100).toFixed(0)}%)</option>{/each}
+                {#each LEAN_CATS as cat,i (i)}<option value={i}>{cat.label} ({(cat.prob*100).toFixed(0)}%)</option>{/each}
               </select>
             </td>
             <td style="padding:3px 5px;text-align:center;">
@@ -1021,7 +1216,7 @@
             <td style="padding:3px 5px;">
               <select value={cur.leanIdx} onchange={(e)=>setVoteLean(v.actionId,'__president__',Number((e.target as HTMLSelectElement).value))}
                 style="font-size:10px;padding:2px 4px;border:1px solid #b8ae8e;border-radius:3px;background:#faf7f0;">
-                {#each LEAN_CATS as cat,i}<option value={i}>{cat.label} ({(cat.prob*100).toFixed(0)}%)</option>{/each}
+                {#each LEAN_CATS as cat,i (i)}<option value={i}>{cat.label} ({(cat.prob*100).toFixed(0)}%)</option>{/each}
               </select>
             </td>
             <td style="padding:3px 5px;text-align:center;">
@@ -1044,9 +1239,9 @@
       <p style="color:#7a7362;font-style:italic;font-size:13px;">No bills queued.</p>
     {:else}
       <table style="width:100%;border-collapse:collapse;font-size:12px;">
-        <thead><tr>{#each ['Title','Proposer','Type','From',''] as h}<th style="text-align:left;padding:4px 6px;font-size:10px;text-transform:uppercase;color:#7a7362;background:#e8e1cc;">{h}</th>{/each}</tr></thead>
+        <thead><tr>{#each ['Title','Proposer','Type','From',''] as h (h)}<th style="text-align:left;padding:4px 6px;font-size:10px;text-transform:uppercase;color:#7a7362;background:#e8e1cc;">{h}</th>{/each}</tr></thead>
         <tbody>
-        {#each billQueue as bill}
+        {#each billQueue as bill (bill.id)}
           <tr style="border-bottom:1px solid #e0d8c0;">
             <td style="padding:4px 6px;font-weight:600;">{bill.title || bill.content}</td>
             <td style="padding:4px 6px;font-weight:700;color:{pc(bill.proposing_party)};">{bill.proposing_party}</td>
@@ -1068,11 +1263,11 @@
     <div style="background:#f1ecdf;border:1px solid #d8d0b8;border-radius:6px;padding:14px;">
       <h2 style="font-family:Georgia,serif;font-size:15px;margin:0 0 10px;border-bottom:1px solid #b8ae8e;padding-bottom:6px;">Add Bill to Queue</h2>
       <div style="display:grid;gap:8px;">
-        <div><label style="font-size:12px;color:#7a7362;">Title</label><input type="text" bind:value={billTitle} placeholder="Bill title" style="width:100%;font-size:13px;padding:5px 8px;border:1px solid #b8ae8e;border-radius:4px;background:#faf7f0;margin-top:2px;" /></div>
-        <div><label style="font-size:12px;color:#7a7362;">Description (optional)</label><input type="text" bind:value={billDesc} placeholder="Brief description…" style="width:100%;font-size:13px;padding:5px 8px;border:1px solid #b8ae8e;border-radius:4px;background:#faf7f0;margin-top:2px;" /></div>
+        <div><label for="bill-title" style="font-size:12px;color:#7a7362;">Title</label><input id="bill-title" type="text" bind:value={billTitle} placeholder="Bill title" style="width:100%;font-size:13px;padding:5px 8px;border:1px solid #b8ae8e;border-radius:4px;background:#faf7f0;margin-top:2px;" /></div>
+        <div><label for="bill-desc" style="font-size:12px;color:#7a7362;">Description (optional)</label><input id="bill-desc" type="text" bind:value={billDesc} placeholder="Brief description…" style="width:100%;font-size:13px;padding:5px 8px;border:1px solid #b8ae8e;border-radius:4px;background:#faf7f0;margin-top:2px;" /></div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-          <div><label style="font-size:12px;color:#7a7362;">Proposer</label><select bind:value={billProposer} style="width:100%;font-size:13px;padding:5px 8px;border:1px solid #b8ae8e;border-radius:4px;background:#faf7f0;margin-top:2px;">{#each PARTIES as p}<option value={p}>{p}</option>{/each}</select></div>
-          <div><label style="font-size:12px;color:#7a7362;">Type</label><select bind:value={billType} style="width:100%;font-size:13px;padding:5px 8px;border:1px solid #b8ae8e;border-radius:4px;background:#faf7f0;margin-top:2px;"><option value="bill">Bill</option><option value="amendment">Amendment</option></select></div>
+          <div><label for="bill-proposer" style="font-size:12px;color:#7a7362;">Proposer</label><select id="bill-proposer" bind:value={billProposer} style="width:100%;font-size:13px;padding:5px 8px;border:1px solid #b8ae8e;border-radius:4px;background:#faf7f0;margin-top:2px;">{#each PARTIES as p (p)}<option value={p}>{p}</option>{/each}</select></div>
+          <div><label for="bill-type" style="font-size:12px;color:#7a7362;">Type</label><select id="bill-type" bind:value={billType} style="width:100%;font-size:13px;padding:5px 8px;border:1px solid #b8ae8e;border-radius:4px;background:#faf7f0;margin-top:2px;"><option value="bill">Bill</option><option value="amendment">Amendment</option></select></div>
         </div>
         <button onclick={addBillToQueue} disabled={!billTitle.trim()} style="padding:8px;background:#1f3a5f;color:#fff;border:none;border-radius:4px;cursor:pointer;font-weight:700;font-size:13px;font-family:inherit;opacity:{billTitle.trim()?'1':'.5'};">Add to Queue</button>
       </div>
@@ -1090,12 +1285,12 @@
           <th style="padding:3px 5px;background:#e8e1cc;font-size:11px;" title="Bump one notch toward for (capped 90%)">Rizz</th>
         </tr></thead>
         <tbody>
-        {#each PARTIES as p}
+        {#each PARTIES as p (p)}
           {@const di=defaultLeanIdx(p,billProposer)}
           <tr>
             <td style="padding:3px 5px;font-weight:700;color:{pc(p)};">{p}</td>
             <td style="padding:3px 5px;color:#7a7362;font-size:11px;">{LEAN_CATS[di].label}</td>
-            <td style="padding:3px 5px;"><select value={billLean[p]??di} onchange={(e)=>{ billLean={...billLean,[p]:Number((e.target as HTMLSelectElement).value)}; }} style="font-size:11px;padding:2px 4px;border:1px solid #b8ae8e;border-radius:3px;background:#faf7f0;">{#each LEAN_CATS as cat,i}<option value={i}>{cat.label} ({(cat.prob*100).toFixed(0)}%)</option>{/each}</select></td>
+            <td style="padding:3px 5px;"><select value={billLean[p]??di} onchange={(e)=>{ billLean={...billLean,[p]:Number((e.target as HTMLSelectElement).value)}; }} style="font-size:11px;padding:2px 4px;border:1px solid #b8ae8e;border-radius:3px;background:#faf7f0;">{#each LEAN_CATS as cat,i (i)}<option value={i}>{cat.label} ({(cat.prob*100).toFixed(0)}%)</option>{/each}</select></td>
             <td style="padding:3px 5px;text-align:center;"><input type="checkbox" checked={!!billRizzBoost[p]} onchange={(e)=>{ billRizzBoost={...billRizzBoost,[p]:(e.target as HTMLInputElement).checked}; }} title="Bump one notch toward for (capped at 90%)" /></td>
           </tr>
         {/each}
@@ -1105,7 +1300,7 @@
           <tr style="border-top:2px solid #b8ae8e;">
             <td style="padding:3px 5px;font-weight:700;color:{pc(presParty)};font-style:italic;">President ({ed.presidentName}, {presParty})</td>
             <td style="padding:3px 5px;color:#7a7362;font-size:11px;">{LEAN_CATS[prDi].label}</td>
-            <td style="padding:3px 5px;"><select value={billLean['__president__']??prDi} onchange={(e)=>{ billLean={...billLean,'__president__':Number((e.target as HTMLSelectElement).value)}; }} style="font-size:11px;padding:2px 4px;border:1px solid #b8ae8e;border-radius:3px;background:#faf7f0;">{#each LEAN_CATS as cat,i}<option value={i}>{cat.label} ({(cat.prob*100).toFixed(0)}%)</option>{/each}</select></td>
+            <td style="padding:3px 5px;"><select value={billLean['__president__']??prDi} onchange={(e)=>{ billLean={...billLean,'__president__':Number((e.target as HTMLSelectElement).value)}; }} style="font-size:11px;padding:2px 4px;border:1px solid #b8ae8e;border-radius:3px;background:#faf7f0;">{#each LEAN_CATS as cat,i (i)}<option value={i}>{cat.label} ({(cat.prob*100).toFixed(0)}%)</option>{/each}</select></td>
             <td style="padding:3px 5px;text-align:center;"><input type="checkbox" checked={!!billRizzBoost['__president__']} onchange={(e)=>{ billRizzBoost={...billRizzBoost,'__president__':(e.target as HTMLInputElement).checked}; }} title="Bump President one notch toward for (capped at 90%)" /></td>
           </tr>
         {/if}
@@ -1126,8 +1321,8 @@
       <p style="font-size:16px;font-weight:700;color:{billResult.passes?'#3b6d11':'#a32d2d'};margin:4px 0 8px;">{billResult.passes?'PASSES':'FAILS'}</p>
       <details style="font-size:12px;"><summary style="cursor:pointer;color:#7a7362;">Per-seat breakdown</summary>
         <table style="width:100%;border-collapse:collapse;font-size:11px;margin-top:6px;">
-          <thead><tr>{#each ['Region','Cls','Party','Occupant','Vote'] as h}<th style="text-align:left;padding:3px 5px;background:#e8e1cc;font-size:10px;">{h}</th>{/each}</tr></thead>
-          <tbody>{#each billResult.seatResults as s}<tr><td style="padding:3px 5px;">{s.region}</td><td style="padding:3px 5px;text-align:center;">{s.class}</td><td style="padding:3px 5px;">{s.party}</td><td style="padding:3px 5px;color:{s.is_player?'#1f3a5f':'#888'};">{s.player_name??'NPC'}</td><td style="padding:3px 5px;font-weight:700;color:{s.vote==='YEA'?'#3b6d11':s.vote==='NAY'?'#a32d2d':'#888'};">{s.vote}</td></tr>{/each}</tbody>
+          <thead><tr>{#each ['Region','Cls','Party','Occupant','Vote'] as h (h)}<th style="text-align:left;padding:3px 5px;background:#e8e1cc;font-size:10px;">{h}</th>{/each}</tr></thead>
+          <tbody>{#each billResult.seatResults as s (s.region)}<tr><td style="padding:3px 5px;">{s.region}</td><td style="padding:3px 5px;text-align:center;">{s.class}</td><td style="padding:3px 5px;">{s.party}</td><td style="padding:3px 5px;color:{s.is_player?'#1f3a5f':'#888'};">{s.player_name??'NPC'}</td><td style="padding:3px 5px;font-weight:700;color:{s.vote==='YEA'?'#3b6d11':s.vote==='NAY'?'#a32d2d':'#888'};">{s.vote}</td></tr>{/each}</tbody>
         </table>
       </details>
     </div>
@@ -1145,13 +1340,13 @@
       <table style="width:100%;border-collapse:collapse;font-size:12px;">
         <thead>
           <tr style="background:#e8e1cc;">
-            {#each ['Turn','Year','Title','Type','Proposer','Yea','Nay','Abstain','Result'] as h}
+            {#each ['Turn','Year','Title','Type','Proposer','Yea','Nay','Abstain','Result'] as h (h)}
               <th style="text-align:left;padding:4px 6px;font-size:10px;text-transform:uppercase;color:#7a7362;white-space:nowrap;">{h}</th>
             {/each}
           </tr>
         </thead>
         <tbody>
-          {#each billHistory as b}
+          {#each billHistory as b (b.id)}
             <tr style="border-bottom:1px solid #e0d8c0;">
               <td style="padding:4px 6px;">{b.turn_index != null ? b.turn_index + 1 : '—'}</td>
               <td style="padding:4px 6px;">{b.year ?? '—'}</td>
@@ -1176,7 +1371,7 @@
   <!-- Election countdown overview -->
   <div style="background:#f1ecdf;border:1px solid #d8d0b8;border-radius:6px;padding:12px 14px;margin-bottom:14px;display:flex;gap:18px;align-items:center;flex-wrap:wrap;font-family:Georgia,serif;font-size:13px;">
     <span style="font-weight:700;color:#7a7362;font-size:11px;text-transform:uppercase;letter-spacing:.05em;">Until next election</span>
-    {#each (['pres',1,2,3] as const) as slot}
+    {#each (['pres',1,2,3] as const) as slot (slot)}
       {#if slot === 'pres'}
         {@const cnt = Math.ceil(gmCurrentTurn / 8) * 8 - gmCurrentTurn}
         <span style="color:{cnt<=2?'#7a2222':'#232019'};font-weight:{cnt<=2?'700':'400'};">
@@ -1198,8 +1393,8 @@
     <h2 style="font-family:Georgia,serif;font-size:15px;margin:0 0 10px;border-bottom:1px solid #b8ae8e;padding-bottom:6px;">Presidential Election</h2>
     {#if ed}
       <p style="font-size:13px;margin:0 0 8px;">
-        Current president: <strong style="color:{pc(ed.presidentParty)};">{ed.presidentName}</strong>
-        ({ed.presidentParty}, elected {ed.presidentElectedYear})
+        Current president: <strong style="color:{pc(ed.presidentParty ?? 'Progressive')};">{ed.presidentName ?? '—'}</strong>
+        ({ed.presidentParty ?? 'Progressive'}, elected {ed.presidentElectedYear ?? '—'})
       </p>
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:10px;">
         <label style="font-size:12px;color:#7a7362;">
@@ -1209,7 +1404,7 @@
           <span style="font-size:12px;color:#7a7362;">Player running (if eligible)</span>
           <select bind:value={playerRunId} style="width:100%;font-size:12px;padding:3px 6px;border:1px solid #b8ae8e;border-radius:4px;background:#faf7f0;margin-top:2px;">
             <option value="">— none —</option>
-            {#each presEligible as pl}<option value={pl.id}>{pl.name} ({pl.party})</option>{/each}
+            {#each presEligible as pl (pl.id)}<option value={pl.id}>{pl.name} ({pl.party})</option>{/each}
           </select>
         </div>
         <div style="display:flex;gap:8px;">
@@ -1232,10 +1427,10 @@
       {#if ed.pendingNominees}
         <div style="background:#e8e1cc;border:1px solid #b8ae8e;border-radius:4px;padding:10px;margin-bottom:10px;font-size:13px;">
           <strong>Nominees for {ed.pendingNominees.year}:</strong>
-          {#each ed.pendingNominees.slots as s}
+            {#each ed.pendingNominees.slots as s (s.party)}
             <span style="margin-left:12px;color:{pc(s.party)};font-weight:600;">{s.party}: {s.name || '?'}</span>
           {/each}
-          <button onclick={() => { ed={...ed,pendingNominees:null}; api.gmPost(`/api/v1/gm/sessions/${sessionId}/pending-nominees`,gmToken,{nominees:null}); }}
+          <button onclick={() => { if (ed) ed={...ed,pendingNominees:null}; api.gmPost(`/api/v1/gm/sessions/${sessionId}/pending-nominees`,gmToken,{nominees:null}); }}
             style="margin-left:10px;font-size:11px;padding:2px 8px;border:1px solid #7a7362;border-radius:3px;cursor:pointer;background:#faf7f0;">Clear</button>
         </div>
       {/if}
@@ -1258,7 +1453,7 @@
               <th style="padding:3px 6px;background:#e8e1cc;font-size:11px;">Elector</th>
             </tr></thead>
             <tbody>
-              {#each presResult.breakdown as b}
+              {#each presResult.breakdown as b (b.region)}
                 <tr>
                   <td style="padding:3px 6px;">{b.region}</td>
                   <td style="padding:3px 6px;text-align:center;">{b.aVal.toFixed(2)}</td>
@@ -1270,7 +1465,7 @@
           </table>
           <p style="margin:0 0 4px;">
             <strong>Electors:</strong>
-            {#each presResult.nominees as n}<span style="margin-right:12px;color:{pc(n.party)};font-weight:600;">{n.party}: {presResult.electors[n.party]}</span>{/each}
+            {#each presResult.nominees as n (n.party)}<span style="margin-right:12px;color:{pc(n.party)};font-weight:600;">{n.party}: {presResult.electors[n.party]}</span>{/each}
           </p>
           {#if presResult.tie}
             <p style="margin:0 0 4px;color:#854f0b;"><strong>Tie!</strong> Popular vote tiebreak: {presResult.nominees[0].party} {presResult.popularVote?.a.toFixed(2)} vs {presResult.nominees[1].party} {presResult.popularVote?.b.toFixed(2)}</p>
@@ -1280,8 +1475,8 @@
             {#if presResult.overridden}<span style="font-size:11px;color:#7a7362;"> (GM override)</span>{/if}
           </p>
           <div style="display:flex;gap:8px;flex-wrap:wrap;">
-            {#each presResult.nominees as n, i}
-              <button onclick={() => { presResult={...presResult, winnerSlot:n, overridden:true}; }}
+            {#each presResult.nominees as n (n.party)}
+              <button onclick={() => { if (presResult) presResult={...presResult, winnerSlot:n, overridden:true}; }}
                 style="padding:4px 10px;font-size:12px;border:1px solid #232019;border-radius:3px;cursor:pointer;background:#faf7f0;font-family:inherit;">
                 Override: {n.name} wins
               </button>
@@ -1303,8 +1498,8 @@
     <h2 style="font-family:Georgia,serif;font-size:15px;margin:0 0 10px;border-bottom:1px solid #b8ae8e;padding-bottom:6px;">Senate Class Election</h2>
     <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-bottom:10px;">
       <div>
-        <label style="font-size:12px;color:#7a7362;display:block;margin-bottom:3px;">Class up for election</label>
-        <select bind:value={senClassPick} style="font-size:13px;padding:5px 8px;border:1px solid #b8ae8e;border-radius:4px;background:#faf7f0;">
+        <label for="sen-class-pick" style="font-size:12px;color:#7a7362;display:block;margin-bottom:3px;">Class up for election</label>
+        <select id="sen-class-pick" bind:value={senClassPick} style="font-size:13px;padding:5px 8px;border:1px solid #b8ae8e;border-radius:4px;background:#faf7f0;">
           <option value={1}>Class 1</option><option value={2}>Class 2</option><option value={3}>Class 3</option>
         </select>
       </div>
@@ -1316,12 +1511,12 @@
     {#if senResult.length > 0}
       <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:10px;">
         <thead><tr>
-          {#each ['Region','Prev. holder','Top party','2nd party','Result','Flipped?','Note'] as h}
+          {#each ['Region','Prev. holder','Top party','2nd party','Result','Flipped?','Note'] as h (h)}
             <th style="text-align:left;padding:4px 6px;font-size:11px;text-transform:uppercase;color:#7a7362;background:#e8e1cc;">{h}</th>
           {/each}
         </tr></thead>
         <tbody>
-          {#each senResult as r}
+          {#each senResult as r (r.region)}
             <tr>
               <td style="padding:4px 6px;">{r.region}</td>
               <td style="padding:4px 6px;color:{pc(r.prevParty)};">{r.prevOccupant} ({r.prevParty})</td>
@@ -1346,14 +1541,14 @@
     <h2 style="font-family:Georgia,serif;font-size:15px;margin:0 0 10px;border-bottom:1px solid #b8ae8e;padding-bottom:6px;">Special Election (Vacancy)</h2>
     <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap;margin-bottom:10px;">
       <div>
-        <label style="font-size:12px;color:#7a7362;display:block;margin-bottom:3px;">Region</label>
-        <select bind:value={spRegion} style="font-size:13px;padding:5px 8px;border:1px solid #b8ae8e;border-radius:4px;background:#faf7f0;">
-          {#each REGIONS as r}<option value={r}>{r}</option>{/each}
+        <label for="special-region" style="font-size:12px;color:#7a7362;display:block;margin-bottom:3px;">Region</label>
+        <select id="special-region" bind:value={spRegion} style="font-size:13px;padding:5px 8px;border:1px solid #b8ae8e;border-radius:4px;background:#faf7f0;">
+          {#each REGIONS as r (r)}<option value={r}>{r}</option>{/each}
         </select>
       </div>
       <div>
-        <label style="font-size:12px;color:#7a7362;display:block;margin-bottom:3px;">Class</label>
-        <select bind:value={spClass} style="font-size:13px;padding:5px 8px;border:1px solid #b8ae8e;border-radius:4px;background:#faf7f0;">
+        <label for="special-class" style="font-size:12px;color:#7a7362;display:block;margin-bottom:3px;">Class</label>
+        <select id="special-class" bind:value={spClass} style="font-size:13px;padding:5px 8px;border:1px solid #b8ae8e;border-radius:4px;background:#faf7f0;">
           <option value={1}>1</option><option value={2}>2</option><option value={3}>3</option>
         </select>
       </div>
@@ -1362,7 +1557,7 @@
     {#if spResult}
       <p style="font-size:13px;margin:0 0 8px;">
         Suggested: <strong style="color:{pc(spResult.party)};">{spResult.party}</strong> fills {spResult.region} Class {spResult.cls}
-        <span style="color:#7a7362;"> ({spResult.ranked.map((p:string)=>p+' '+(regionApproval[spResult.region]?.[p]??0).toFixed(1)).join(', ')})</span>
+        <span style="color:#7a7362;"> ({(spResult?.ranked ?? []).map((p:string)=>p+' '+(regionApproval[spResult?.region ?? '']?.[p]??0).toFixed(1)).join(', ')})</span>
       </p>
       <button onclick={applySpecial} style="padding:6px 12px;background:#7a2222;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:13px;font-family:inherit;font-weight:700;">Apply — Fill with NPC</button>
     {/if}
@@ -1373,13 +1568,13 @@
     <h2 style="font-family:Georgia,serif;font-size:15px;margin:0 0 10px;border-bottom:1px solid #b8ae8e;padding-bottom:6px;">NPC Candidate Pool</h2>
     <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:10px;">
       <div>
-        <label style="font-size:12px;color:#7a7362;display:block;margin-bottom:3px;">Election year</label>
-        <input type="number" bind:value={newNpcYear} step="4" min="1904" style="width:80px;font-size:13px;padding:5px 8px;border:1px solid #b8ae8e;border-radius:4px;background:#faf7f0;" />
+        <label for="npc-year" style="font-size:12px;color:#7a7362;display:block;margin-bottom:3px;">Election year</label>
+        <input id="npc-year" type="number" bind:value={newNpcYear} step="4" min="1904" style="width:80px;font-size:13px;padding:5px 8px;border:1px solid #b8ae8e;border-radius:4px;background:#faf7f0;" />
       </div>
-      {#each PARTIES as p}
+      {#each PARTIES as p (p)}
         <div>
-          <label style="font-size:12px;color:{pc(p)};font-weight:700;display:block;margin-bottom:3px;">{p}</label>
-          <input type="text" placeholder="Candidate name"
+          <label for={`npc-name-${p}`} style="font-size:12px;color:{pc(p)};font-weight:700;display:block;margin-bottom:3px;">{p}</label>
+          <input id={`npc-name-${p}`} type="text" placeholder="Candidate name"
             value={newNpcNames[p]}
             oninput={(e) => { newNpcNames = {...newNpcNames, [p]: (e.target as HTMLInputElement).value}; }}
             style="font-size:12px;padding:4px 6px;border:1px solid #b8ae8e;border-radius:4px;background:#faf7f0;width:130px;" />
@@ -1387,24 +1582,24 @@
       {/each}
       <button onclick={addNpcCandidate} style="padding:7px 14px;background:#232019;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:13px;font-family:inherit;font-weight:600;">Add to Pool</button>
     </div>
-    {#if ed?.npcCandidates?.length > 0}
+    {#if (ed?.npcCandidates ?? []).length > 0}
       <table style="width:100%;border-collapse:collapse;font-size:12px;">
         <thead><tr>
           <th style="text-align:left;padding:4px 6px;font-size:11px;text-transform:uppercase;color:#7a7362;background:#e8e1cc;">Year</th>
-          {#each PARTIES as p}<th style="padding:4px 6px;font-size:11px;color:{pc(p)};background:#e8e1cc;">{p}</th>{/each}
+          {#each PARTIES as p (p)}<th style="padding:4px 6px;font-size:11px;color:{pc(p)};background:#e8e1cc;">{p}</th>{/each}
           <th style="padding:4px 6px;background:#e8e1cc;"></th>
         </tr></thead>
         <tbody>
-          {#each [...new Set(ed.npcCandidates.map((c:any)=>c.year))].sort() as yrRaw}
+          {#each [...new Set((ed?.npcCandidates ?? []).map(c => c.year))].sort() as yrRaw (yrRaw)}
             {@const yr = yrRaw as number}
             <tr>
               <td style="padding:4px 6px;font-weight:600;">{yr}</td>
-              {#each PARTIES as p}
-                {@const cand = ed.npcCandidates.find((c:any)=>c.year===yr&&c.party===p)}
+              {#each PARTIES as p (p)}
+                {@const cand = (ed?.npcCandidates ?? []).find(c => c.year===yr&&c.party===p)}
                 <td style="padding:4px 6px;">{cand?.name ?? '—'}</td>
               {/each}
               <td style="padding:4px 6px;">
-                <button onclick={() => { for(const p of PARTIES) { const c=ed.npcCandidates.find((c:any)=>c.year===yr&&c.party===p); if(c) removeNpcCandidate(yr,p); } }}
+                <button onclick={() => { for(const p of PARTIES) { const c=(ed?.npcCandidates ?? []).find(c => c.year===yr&&c.party===p); if(c) removeNpcCandidate(yr,p); } }}
                   style="font-size:11px;padding:2px 8px;border:1px solid #a32d2d;color:#a32d2d;border-radius:3px;cursor:pointer;background:#faf7f0;">&times; Remove Year</button>
               </td>
             </tr>
@@ -1432,20 +1627,20 @@
       {#if statHistory.length===0}<p style="font-size:13px;color:#7a7362;font-style:italic;">None yet.</p>
       {:else}
         <table style="width:100%;border-collapse:collapse;font-size:12px;">
-          <thead><tr>{#each ['Stat','Target','Delta','Reason'] as h}<th style="text-align:left;padding:4px 6px;font-size:11px;text-transform:uppercase;color:#7a7362;background:#e8e1cc;">{h}</th>{/each}</tr></thead>
-          <tbody>{#each statHistory as h}<tr><td style="padding:4px 6px;">{h.stat}</td><td style="padding:4px 6px;">{h.target}</td><td style="padding:4px 6px;font-weight:700;color:{h.delta>0?'#3b6d11':'#a32d2d'};">{h.delta>0?'+':''}{h.delta}</td><td style="padding:4px 6px;color:#555;">{h.reason}</td></tr>{/each}</tbody>
+          <thead><tr>{#each ['Stat','Target','Delta','Reason'] as h (h)}<th style="text-align:left;padding:4px 6px;font-size:11px;text-transform:uppercase;color:#7a7362;background:#e8e1cc;">{h}</th>{/each}</tr></thead>
+          <tbody>{#each statHistory as h (h.stat)}<tr><td style="padding:4px 6px;">{h.stat}</td><td style="padding:4px 6px;">{h.target}</td><td style="padding:4px 6px;font-weight:700;color:{h.delta>0?'#3b6d11':'#a32d2d'};">{h.delta>0?'+':''}{h.delta}</td><td style="padding:4px 6px;color:#555;">{h.reason}</td></tr>{/each}</tbody>
         </table>
       {/if}
     </div>
   </div>
 
   {#if statChangeOpen}
-    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-    <div style="position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:50;"
-      onclick={() => statChangeOpen = false}>
-      <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
-      <div style="background:#fff;border-radius:8px;box-shadow:0 4px 20px rgba(0,0,0,0.3);width:100%;max-width:480px;margin:0 16px;"
-        onclick={(e) => e.stopPropagation()}>
+    <div role="button" tabindex="0" aria-label="Close stat change dialog" style="position:fixed;inset:0;background:rgba(0,0,0,0.4);display:flex;align-items:center;justify-content:center;z-index:50;"
+      onclick={() => statChangeOpen = false}
+      onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') statChangeOpen = false; }}>
+      <div role="dialog" tabindex="-1" aria-modal="true" style="background:#fff;border-radius:8px;box-shadow:0 4px 20px rgba(0,0,0,0.3);width:100%;max-width:480px;margin:0 16px;"
+        onclick={(e) => e.stopPropagation()}
+        onkeydown={(e) => e.stopPropagation()}>
         <div style="padding:4px;"><StatChangePanel {sessionId} /></div>
         <div style="padding:8px 12px;border-top:1px solid #e8e1cc;text-align:right;">
           <button onclick={() => statChangeOpen = false}

@@ -112,7 +112,7 @@
           : `Reelection in ${mySenateCountdown} turn${mySenateCountdown === 1 ? '' : 's'}`}
       </span>
     {/if}
-    {#each electionAlert() as alert}
+    {#each electionAlert() as alert (alert)}
       <span style="background:#7a2222;color:#fff;font-size:10px;font-weight:700;padding:2px 7px;border-radius:3px;letter-spacing:.03em;">
         ⚑ {alert}
       </span>
@@ -122,7 +122,7 @@
   <!-- Show election alerts even for observers / before joining -->
   {#if electionAlert().length > 0}
     <div style="background:#1c1a14;border-bottom:1px solid #3d3520;padding:6px 16px;display:flex;gap:8px;flex-wrap:wrap;">
-      {#each electionAlert() as alert}
+      {#each electionAlert() as alert (alert)}
         <span style="background:#7a2222;color:#fff;font-size:10px;font-weight:700;padding:2px 7px;border-radius:3px;">⚑ {alert}</span>
       {/each}
     </div>

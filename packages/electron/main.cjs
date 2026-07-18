@@ -115,7 +115,18 @@ function getInviteConfigCandidatePaths () {
 
 function loadInviteConfig () {
   const candidatePaths = getInviteConfigCandidatePaths();
-  const existingPath = candidatePaths.find(configPath => fs.existsSync(configPath));
+  // Prefer the first file that both exists AND has a non-empty publicBaseUrl.
+  // This prevents a blank default config (e.g. the app's own userData file)
+  // from shadowing a correctly configured ProgramData or AppData file.
+  const existingPath =
+    candidatePaths.find(p => {
+      if (!fs.existsSync(p)) return false;
+      try {
+        const parsed = JSON.parse(fs.readFileSync(p, 'utf8'));
+        return typeof parsed?.publicBaseUrl === 'string' && parsed.publicBaseUrl.trim() !== '';
+      } catch { return false; }
+    }) ??
+    candidatePaths.find(configPath => fs.existsSync(configPath));
 
   if (!existingPath) {
     writeDefaultInviteConfig();

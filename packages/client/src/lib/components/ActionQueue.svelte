@@ -58,7 +58,7 @@
   {#if $pendingActions.length === 0}
     <p class="text-sm text-gray-400 italic">No player actions pending review.</p>
   {:else}
-    {#each $pendingActions as action}
+    {#each $pendingActions as action (action.actionId)}
       <div class="border rounded p-3 space-y-2 bg-gray-50">
 
         <!-- Header: player info + turn + type badge -->
@@ -75,19 +75,21 @@
 
         <!-- Editable type -->
         <div class="flex items-center gap-2">
-          <label class="text-xs text-gray-500 w-10">Type</label>
+          <label class="text-xs text-gray-500 w-10" for={`action-type-${action.actionId}`}>Type</label>
           <select
+            id={`action-type-${action.actionId}`}
             class="border rounded text-xs px-1 py-0.5"
             value={action.editedType}
             onchange={(e) => updateActionEdit(action.actionId, 'editedType', (e.target as HTMLSelectElement).value)}>
-            {#each ACTION_TYPES as t}<option value={t}>{t}</option>{/each}
+            {#each ACTION_TYPES as t (t)}<option value={t}>{t}</option>{/each}
           </select>
         </div>
 
         <!-- Editable content -->
         <div class="space-y-0.5">
-          <label class="text-xs text-gray-500">Description</label>
+          <label class="text-xs text-gray-500" for={`action-content-${action.actionId}`}>Description</label>
           <textarea
+            id={`action-content-${action.actionId}`}
             rows="2"
             class="border rounded w-full px-2 py-1 text-sm resize-y"
             value={action.editedContent}
@@ -139,7 +141,7 @@
         {:else if historyRecords.length === 0}
           <p class="text-sm text-gray-400 italic">No accepted actions yet.</p>
         {:else}
-          {#each historyRecords as r}
+          {#each historyRecords as r (`${r.actionId ?? ''}-${r.turnIndex ?? ''}-${r.year ?? ''}-${r.playerName ?? ''}`)}
             <div class="border rounded p-2 text-xs space-y-0.5">
               <div class="flex gap-2 font-medium">
                 <span>{String(r.playerName)}</span>

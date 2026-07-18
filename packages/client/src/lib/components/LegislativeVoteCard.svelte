@@ -6,7 +6,7 @@
 
 {#if $pendingActionVotes.length > 0}
   <div class="space-y-3">
-    {#each $pendingActionVotes as vote}
+    {#each $pendingActionVotes as vote (vote.actionId)}
       {@const tally = Object.values(vote.playerVotes).reduce(
           (acc, v) => { acc[v as VoteOption] = (acc[v as VoteOption] ?? 0) + 1; return acc; },
           { YEA: 0, NAY: 0 } as Record<string, number>
@@ -51,7 +51,7 @@
               &nbsp;Nay: <span style="color:#c0392b;font-weight:700;">{tally.NAY}</span>
             </div>
             <div style="display:flex;flex-wrap:wrap;gap:4px;">
-              {#each Object.entries(vote.playerVotes) as [name, v]}
+              {#each Object.entries(vote.playerVotes) as [name, v] (name)}
                 <span style="font-size:10px;background:{v==='YEA'?'#1e3d1a':'#3d1a1a'};color:{v==='YEA'?'#7de87d':'#e87d7d'};padding:1px 6px;border-radius:3px;">
                   {name}: {v}
                 </span>

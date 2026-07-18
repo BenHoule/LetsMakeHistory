@@ -45,7 +45,9 @@
       "sign": null,
       "certificateFile": null,
       "certificatePassword": null,
-      "signingHashAlgorithms": [],
+      "signtoolOptions": {
+        "signingHashAlgorithms": []
+      },
       "signAndEditExecutable": false
     },
     "mac": {
@@ -84,13 +86,13 @@
     "npmRebuild": true,
     "nodeGypRebuild": false,
     "buildDependenciesFromSource": false,
-    "asar": false
+    "asar": true
   },
   "devDependencies": {
     "electron": "^33.0.0",
     "electron-builder": "^25.0.0"
   },
   "allowScripts": {
-    "file:../../../node_modules/.pnpm/electron@33.4.11/node_modules/electron": true
+    "electron": true
   }
 }

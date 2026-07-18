@@ -3,14 +3,15 @@ import adapterStatic from '@sveltejs/adapter-static';
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
 import tailwindcss from '@tailwindcss/vite';
-import tsconfigPaths from 'vite-tsconfig-paths';
 
 const isProd = process.env.NODE_ENV === 'production';
 
 export default defineConfig({
+	resolve: {
+		tsconfigPaths: true
+	},
 	plugins: [
 		tailwindcss(),
-		tsconfigPaths({ root: '../../' }),
 		sveltekit({
 			compilerOptions: {
 				runes: ({ filename }) =>

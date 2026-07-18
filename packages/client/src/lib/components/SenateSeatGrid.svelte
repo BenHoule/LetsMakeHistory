@@ -9,16 +9,16 @@
     <thead>
       <tr>
         <th class="border px-2 py-1 text-left">Region</th>
-        {#each CLASSES as c}
+        {#each CLASSES as c (c)}
           <th class="border px-2 py-1">Class {c}</th>
         {/each}
       </tr>
     </thead>
     <tbody>
-      {#each REGIONS as region}
+      {#each REGIONS as region (region)}
         <tr>
           <td class="border px-2 py-1">{region}</td>
-          {#each CLASSES as c}
+          {#each CLASSES as c (c)}
             {@const seat = $sessionStore.players.find(
               p => p.region === region && p.class === c
             )}

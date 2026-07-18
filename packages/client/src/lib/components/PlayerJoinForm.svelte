@@ -87,20 +87,20 @@
   <input class="border p-2 w-full" bind:value={name} placeholder="Player name" required />
 
   <select class="border p-2 w-full" bind:value={region}>
-    {#each REGIONS as r}
+    {#each REGIONS as r (r)}
       {@const allFull = availableClasses(r).length === 0}
       <option value={r} disabled={allFull}>{r}{allFull ? ' (full)' : ''}</option>
     {/each}
   </select>
 
   <select class="border p-2 w-full" bind:value={party}>
-    {#each PARTIES as p}
+    {#each PARTIES as p (p)}
       <option value={p}>{p}</option>
     {/each}
   </select>
 
   <select class="border p-2 w-full" bind:value={clss}>
-    {#each CLASSES as c}
+    {#each CLASSES as c (c)}
       <option value={c} disabled={isFull(region, c)}>Class {c}{isFull(region, c) ? ' (taken)' : ''}</option>
     {/each}
   </select>

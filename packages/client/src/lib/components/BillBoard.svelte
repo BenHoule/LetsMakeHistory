@@ -3,8 +3,6 @@
   import { socket } from '$lib/socket.js';
   import type { VoteOption } from '@lmh/types';
 
-  let { sessionId } = $props();
-
   function vote(billId: string, v: VoteOption) {
     socket.emit('submit_vote', {billId, vote: v });
   }
@@ -13,7 +11,7 @@
 {#if $bills.length}
   <div class="space-y-3">
     <h3 class="font-semibold">Bills on the Floor</h3>
-    {#each $bills as bill}
+    {#each $bills as bill (bill.id)}
       <div class="border rounded p-3 space-y-2">
         <div class="flex items-center gap-2">
           <span class="text-xs px-2 py-0.5 bg-gray-100 rounded">{bill.proposingParty}</span>

@@ -19,7 +19,7 @@
         </tr>
       </thead>
       <tbody>
-        {#each $players as p}
+        {#each $players as p (p.id ?? p.name)}
           <tr class="border-t">
             <td class="py-1 pr-3 font-medium">{p.name}</td>
             <td class="py-1 pr-3 text-gray-600">{p.party}</td>

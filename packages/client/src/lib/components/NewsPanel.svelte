@@ -5,7 +5,7 @@
 
 {#if headlines.length}
   <div class="grid grid-cols-2 gap-3">
-    {#each headlines as h}
+    {#each headlines as h (`${h.outlet}-${h.headline}`)}
       <div class="border rounded p-3 text-sm">
         <p class='text-xs text-gray-500 mb-1'>
           {h.outlet === 'AP' ? 'Associated Press' : 'The American Standard'}

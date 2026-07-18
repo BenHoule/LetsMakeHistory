@@ -56,6 +56,26 @@ function runPnpm(args, options = {}) {
   run(commandName('pnpm'), args, options);
 }
 
+function needsElectronInstall(electronDir) {
+  const nodeModulesDir = path.join(electronDir, 'node_modules');
+  if (!existsSync(nodeModulesDir)) {
+    return true;
+  }
+
+  const requiredPaths = [
+    path.join(nodeModulesDir, 'electron', 'package.json'),
+    path.join(nodeModulesDir, 'electron-builder', 'cli.js'),
+  ];
+
+  for (const requiredPath of requiredPaths) {
+    if (!existsSync(requiredPath)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 console.log('');
 console.log('==========================================');
 console.log("  Let's Make History - Distribution Build");
@@ -93,10 +113,30 @@ console.log('  -> Server bundled to packages/server/dist/index.cjs');
 
 const electronDir = path.join(REPO_ROOT, 'packages', 'electron');
 const electronNodeModules = path.join(electronDir, 'node_modules');
-if (existsSync(electronNodeModules)) {
-  rmSync(electronNodeModules, { recursive: true, force: true });
+const forceElectronInstall = process.env.FORCE_ELECTRON_INSTALL === '1';
+if (forceElectronInstall && existsSync(electronNodeModules)) {
+  try {
+    rmSync(electronNodeModules, { recursive: true, force: true });
+  } catch (e) {
+    // On Windows the folder can be locked by a running Electron process or
+    // antivirus. Skip the clean so the build can continue; npm install will
+    // update packages in-place.
+    console.warn(`  WARN: Could not remove ${electronNodeModules} (${e.code}). Skipping clean — npm install will update in-place.`);
+  }
 }
-run(commandName('npm'), ['install', '--no-package-lock'], { cwd: electronDir });
+
+if (forceElectronInstall || needsElectronInstall(electronDir)) {
+  if (forceElectronInstall) {
+    console.log('  -> FORCE_ELECTRON_INSTALL=1 set; reinstalling Electron packaging dependencies...');
+  } else {
+    console.log('  -> Electron packaging dependencies missing; installing...');
+  }
+  run(commandName('npm'), ['install', '--no-package-lock', '--no-audit', '--fund=false', '--loglevel=error'], {
+    cwd: electronDir,
+  });
+} else {
+  console.log('  -> Reusing existing Electron packaging dependencies (set FORCE_ELECTRON_INSTALL=1 to refresh).');
+}
 
 const electronPkgPath = path.join(electronDir, 'node_modules', 'electron', 'package.json');
 if (!existsSync(electronPkgPath)) {

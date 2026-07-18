@@ -29,11 +29,60 @@ const PORT = Number(process.env.PORT ?? 3001);
 // In a packaged Electron app this is set to the extracted static build folder.
 const STATIC_DIR = process.env.STATIC_DIR ?? path.join(__dirname, '..', '..', 'client', 'build');
 
+// Candidate paths for invite-settings.json (same order as Electron main process).
+// The server reads the file directly so runtime-config works even when the
+// server is NOT launched by Electron (e.g. standalone behind Caddy).
+function readInviteSettingsFile(): { publicBaseUrl: string; publicPort: number } | null {
+  const appData = process.env.APPDATA ?? '';
+  const programData = process.env.ProgramData ?? '';
+  const userDataFallback = process.env.LMH_USER_DATA ?? '';
+
+  const candidates = [
+    programData  ? path.join(programData,  'LetsMakeHistory',          'invite-settings.json') : '',
+    userDataFallback ? path.join(userDataFallback, 'invite-settings.json') : '',
+    appData      ? path.join(appData,       "Let's Make History",       'invite-settings.json') : '',
+    appData      ? path.join(appData,       'lmhistory-app',            'invite-settings.json') : '',
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    try {
+      if (!fs.existsSync(candidate)) continue;
+      const parsed = JSON.parse(fs.readFileSync(candidate, 'utf8'));
+      const baseUrl = typeof parsed?.publicBaseUrl === 'string' ? parsed.publicBaseUrl.trim() : '';
+      const portRaw = Number(parsed?.publicPort);
+      const publicPort = Number.isInteger(portRaw) && portRaw > 0 && portRaw <= 65535 ? portRaw : PORT;
+      if (baseUrl) return { publicBaseUrl: baseUrl, publicPort };
+    } catch {
+      // ignore unreadable file, try next
+    }
+  }
+  return null;
+}
+
+function buildSharePlayerBaseUrl(): string | null {
+  // 1. Env var set by Electron parent process (preferred when launched via app).
+  const fromEnv = (process.env.INTERNET_BASE_URL ?? '').trim();
+  if (fromEnv) return fromEnv;
+
+  // 2. Read invite-settings.json directly (works when running standalone/Caddy).
+  const settings = readInviteSettingsFile();
+  if (!settings?.publicBaseUrl) return null;
+
+  // Reconstruct a clean URL, injecting publicPort if not already in the URL.
+  try {
+    const url = new URL(settings.publicBaseUrl);
+    if (!url.port) url.port = String(settings.publicPort);
+    return url.origin; // strips trailing slash
+  } catch {
+    return null;
+  }
+}
+
 function getRuntimeConfig() {
-  const sharePlayerBaseUrl = (process.env.INTERNET_BASE_URL ?? process.env.PUBLIC_BASE_URL ?? '').trim();
-  const internetInviteSource = (process.env.INTERNET_INVITE_SOURCE ?? 'unknown').trim() || 'unknown';
+  const sharePlayerBaseUrl = buildSharePlayerBaseUrl();
+  const internetInviteSource = (process.env.INTERNET_INVITE_SOURCE ?? (sharePlayerBaseUrl ? 'config' : 'unknown')).trim() || 'unknown';
   return {
-    sharePlayerBaseUrl: sharePlayerBaseUrl || null,
+    sharePlayerBaseUrl,
     internetInviteSource,
   };
 }

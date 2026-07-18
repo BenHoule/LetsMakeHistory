@@ -77,7 +77,7 @@
   <div class="space-y-1">
     <label class="text-xs font-medium text-gray-600" for="sc-stat">Stat</label>
     <select id="sc-stat" class="border rounded w-full px-2 py-1 text-sm" bind:value={stat}>
-      {#each STAT_OPTS as s}<option value={s}>{s}</option>{/each}
+      {#each STAT_OPTS as s (s)}<option value={s}>{s}</option>{/each}
     </select>
     <p class="text-xs text-gray-400">
       Small &plusmn;{deltas[0]} &nbsp;&bull;&nbsp; Medium &plusmn;{deltas[1]} &nbsp;&bull;&nbsp;
@@ -95,20 +95,20 @@
         {#if $players.length === 0}
           <option value="">No players yet</option>
         {:else}
-          {#each $players as p}<option value={p.name}>{p.name} ({p.party})</option>{/each}
+          {#each $players as p (p.id ?? p.name)}<option value={p.name}>{p.name} ({p.party})</option>{/each}
         {/if}
       </select>
     {:else if isParty}
       <select id="sc-target" class="border rounded w-full px-2 py-1 text-sm" bind:value={party}>
-        {#each ALL_PARTIES as p}<option value={p}>{p}</option>{/each}
+        {#each ALL_PARTIES as p (p)}<option value={p}>{p}</option>{/each}
       </select>
     {:else}
       <div class="flex gap-2">
         <select class="border rounded flex-1 px-2 py-1 text-sm" bind:value={region}>
-          {#each ALL_REGIONS as r}<option value={r}>{r}</option>{/each}
+          {#each ALL_REGIONS as r (r)}<option value={r}>{r}</option>{/each}
         </select>
         <select class="border rounded flex-1 px-2 py-1 text-sm" bind:value={regParty}>
-          {#each ALL_PARTIES as p}<option value={p}>{p}</option>{/each}
+          {#each ALL_PARTIES as p (p)}<option value={p}>{p}</option>{/each}
         </select>
       </div>
       <p class="text-xs text-gray-400">Target will be: <code>{composedTarget}</code></p>

@@ -4,7 +4,7 @@
 
 <div class="space-y-3">
   <h3 class="font-semibold text-sm">Senators</h3>
-  {#each $players as p}
+  {#each $players as p (p.id ?? p.name)}
   <div class="border rounded p-2 text-xs space-y-1">
     <p class="font-medium">{p.name}</p>
     <p class="text-gray-500">{p.party} · {p.region}</p>
